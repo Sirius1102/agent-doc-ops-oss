@@ -1,0 +1,14 @@
+node_modules/
+_out/
+_tmp/
+_probe/
+*.log
+.DS_Store
+_audit/
+.cowork-temp/
+.workbuddy/
+*.png
+shots/
+data/
+.env
+*.map.txt

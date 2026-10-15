@@ -1,0 +1,189 @@
+{
+ "stamp": "2026-10-04",
+ "host": "<MACHINE-A>",
+ "families": {
+  "Carlito": {
+   "embedded": [
+    "Carlito",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Caladea": {
+   "embedded": [
+    "Caladea-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Liberation Sans": {
+   "embedded": [
+    "LiberationSans",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Liberation Serif": {
+   "embedded": [
+    "LiberationSerif",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Liberation Mono": {
+   "embedded": [
+    "LiberationMono",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "DejaVu Sans": {
+   "embedded": [
+    "DejaVuSans",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "DejaVu Serif": {
+   "embedded": [
+    "DejaVuSerif",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Noto Sans": {
+   "embedded": [
+    "NotoSans-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Noto Serif": {
+   "embedded": [
+    "NotoSansSC-Regular",
+    "NotoSerif-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Gentium Basic": {
+   "embedded": [
+    "GentiumBasic",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Rubik": {
+   "embedded": [
+    "NotoSansSC-Regular",
+    "Rubik-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Amiri": {
+   "embedded": [
+    "Amiri-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Alef": {
+   "embedded": [
+    "Alef-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "David Libre": {
+   "embedded": [
+    "DavidLibre-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Miriam Libre": {
+   "embedded": [
+    "MiriamLibre-Regular",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Cousine": {
+   "embedded": [
+    "ArialMT",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": [
+    "Cousine"
+   ]
+  },
+  "Tinos": {
+   "embedded": [
+    "ArialMT",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": [
+    "Tinos"
+   ]
+  },
+  "Arimo": {
+   "embedded": [
+    "ArialMT",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": [
+    "Arimo"
+   ]
+  },
+  "宋体": {
+   "embedded": [
+    "SimSun"
+   ],
+   "missingFonts": []
+  },
+  "微软雅黑": {
+   "embedded": [
+    "MicrosoftYaHei"
+   ],
+   "missingFonts": []
+  },
+  "黑体": {
+   "embedded": [
+    "SimHei"
+   ],
+   "missingFonts": []
+  },
+  "KaiTi": {
+   "embedded": [
+    "KaiTi"
+   ],
+   "missingFonts": []
+  },
+  "SimSun": {
+   "embedded": [
+    "SimSun"
+   ],
+   "missingFonts": []
+  },
+  "Arial": {
+   "embedded": [
+    "ArialMT",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  },
+  "Times New Roman": {
+   "embedded": [
+    "NotoSansSC-Regular",
+    "TimesNewRomanPSMT"
+   ],
+   "missingFonts": []
+  },
+  "Courier New": {
+   "embedded": [
+    "CourierNewPSMT",
+    "NotoSansSC-Regular"
+   ],
+   "missingFonts": []
+  }
+ }
+}
