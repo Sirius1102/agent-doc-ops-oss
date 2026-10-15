@@ -5,6 +5,8 @@ description: Convert, render, inspect, recalculate and metadata-scrub Office doc
 
 # dockit — document operations device (pointer card, not a copy)
 
+<!-- 判据条数=163 -->
+
 This card does one thing: **point the session at the single source of truth.** The
 command list, response fields, boundaries and report format all come from the device
 itself — never memorize them, always read them back. Any copy made here will drift.
@@ -53,3 +55,7 @@ Let `<REPO>` denote the full path of the cloned directory (e.g. `D:\tools\agent-
   machine fact, not a defect — a fresh clone must stay green.
 - Where the project documentation lives (architecture, history): see `README.md` in the
   repo root.
+- Public-tree note: `<REPO>\给其它agent-调用卡.md`, `项目总览.md` and
+  `entry-points.json` exist only in the private tree. In a public clone they are
+  absent — this card is then the whole usage master (judges SKIP on missing
+  files by design, never claim coverage).

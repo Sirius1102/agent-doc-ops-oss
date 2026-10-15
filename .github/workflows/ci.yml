@@ -1,0 +1,20 @@
+# CI 子集（全量见 CONTRIBUTING.md：无字体基线——机器字体相关、无写后端现场面——OfficeCLI 需自备、无真机样本）
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: node dockit.js doctor
+      - run: node test/char-baseline.js check
+      - run: node test/dep-set.js lint
+      - run: npm run test:installers
+      - run: node dockit.js selftest
+      - run: node test/mutant.js --public

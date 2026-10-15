@@ -6,7 +6,7 @@
  "来源sha256": "f81e5c17e1f97a97e5e47a29a3ec7c7bf1d05660dea1c9a503a361e1f0134253",
  "件数": 146,
  "说明": "替身字体登记清单（LibreOffice 当年装进系统字体库的那批度量兼容件）。doctor 的 substitute-fonts-present 按它核全量；非标定机器降 WARN。",
- "追加记录": "2026-10-10：常用中文字库 11 件装载（GB2312 系仿宋/楷体、方正小标宋、黑体等四族）；原件与安装套件留档在机主侧备份目录（含 install/uninstall 脚本与 manifest.csv）。",
+ "追加记录": "后续补充了字体登记；字体源文件与安装材料由维护者自行保管，公开仓不分发字体二进制。",
  "files": [
   {
    "name": "Alef-Bold.ttf",

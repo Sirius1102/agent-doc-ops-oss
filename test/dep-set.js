@@ -96,7 +96,7 @@ function checkClone() {
     const extra = uniq.filter((s) => !regSorted.includes(s));
     const missing = regSorted.filter((s) => !uniq.includes(s));
     if (extra.length || missing.length) {
-      console.log(JSON.stringify({ ok: false, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: uniq.length, extra: extra.slice(0, 8), missing: missing.slice(0, 8), note: '真克隆态 SKIP 集合与注册表不一致——新增吃 kit 的判据要登记，或某条该 SKIP 的没 SKIP' }, null, 1));
+      console.log(JSON.stringify({ ok: false, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: uniq.length, extra, missing, note: '真克隆态 SKIP 集合与注册表不一致——新增吃 kit 的判据要登记，或某条该 SKIP 的没 SKIP' }, null, 1));
       process.exit(1);
     }
   } finally {

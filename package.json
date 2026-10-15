@@ -1,19 +1,24 @@
 {
   "name": "agent-doc-ops",
-  "version": "3.0.1",
+  "version": "3.2.0",
   "private": true,
-  "description": "本机文档操作装置：把 @deepseek-ai/libreoffice-kit 的预编译 LibreOffice 引擎包成任一 agent 都能一条命令调用的入口（转换/渲染/重算/体检/元数据清理/自检）",
+  "description": "本机文档操作装置：为 @deepseek-ai/libreoffice-kit 提供统一 CLI 与 JSON 入口，支持 Agent 通过命令行集成",
+  "license": "MIT",
+  "repository": "https://github.com/Sirius1102/agent-doc-ops-oss.git",
+  "author": "Sirius <laizeyu00@gmail.com>",
   "main": "dockit.js",
   "bin": {
     "dockit": "dockit.js"
   },
   "scripts": {
     "test": "node dockit.js selftest",
+    "test:installers": "node test/installers-args.js",
     "doctor": "node dockit.js doctor"
   },
   "engines": {
     "node": ">=22.19.0"
   },
+  "os": ["win32"],
   "dependencies": {
     "@deepseek-ai/libreoffice-kit": "0.1.5",
     "@pdf-lib/fontkit": "1.1.1",

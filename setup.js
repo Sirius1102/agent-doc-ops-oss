@@ -8,6 +8,8 @@
 //   node setup.js --no-deps      # 跳过 npm install（已装过依赖时）
 //   node setup.js --no-doctor    # 跳过最后的 doctor 验收
 //   node setup.js --list         # 只列出探测到的 agent 技能目录
+//   node setup.js --with-system-deps <csv|all> [--include-vc]  # 显式 opt-in 才装系统依赖
+//      （委托 install-system-deps.js；获取参数经 SYSDEPS_* 环境变量给；VC++ 另需 --include-vc 双重显式）
 //
 // 前提：机器已有 Node（本脚本本身用 Node 跑，Node 缺失时这条命令根本无法启动——
 // 安装说明里写明 Node ≥ 22.19，缺 Node 时先装 Node 再回来）。
@@ -21,6 +23,7 @@ const ROOT = __dirname;
 
 function detectSkillDirs() {
   const home = process.env.USERPROFILE || process.env.HOME;
+  if (!home) return [];
   return [
     path.join(home, '.codex', 'skills'),
     path.join(home, '.claude', 'skills'),
@@ -39,6 +42,13 @@ function copyDir(src, dst) {
   }
 }
 
+function pruneBackups(dir, base) {
+  // .bak 保留策略：只留最近 3 个旧备份，多出的在本次成功安装后清理（重复执行不无限堆）。
+  let olds = [];
+  try { olds = fs.readdirSync(dir).filter((n) => n.startsWith(base + '.bak-')).sort(); } catch { return; }
+  while (olds.length > 3) { const victim = olds.shift(); try { fs.rmSync(path.join(dir, victim), { recursive: true, force: true }); } catch { break; } }
+}
+
 function installSkill(dir) {
   const src = path.join(ROOT, 'skills', 'agent-doc-ops');
   if (!fs.existsSync(path.join(src, 'SKILL.md'))) return { ok: false, dir, error: '本仓 skills/agent-doc-ops/SKILL.md 缺失' };
@@ -53,6 +63,7 @@ function installSkill(dir) {
     if (backedUp) fs.renameSync(dst, backedUp);
     if (fs.existsSync(dst)) fs.rmSync(dst, { recursive: true, force: true });
     fs.renameSync(tmp, dst);
+    pruneBackups(path.dirname(dst), path.basename(dst));
     return { ok: true, dir: dst, backedUp };
   } catch (e) {
     // 回滚：换名失败或复制失败时恢复备份
@@ -63,13 +74,38 @@ function installSkill(dir) {
 }
 
 function main(argv) {
-  const a = { dirs: [], noDeps: false, noDoctor: false, list: false };
+  const a = { dirs: [], noDeps: false, noDoctor: false, list: false, sysDeps: null, includeVc: false };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
-    if (x === '--skill-dir') a.dirs.push(argv[++i]);
+    if (x === '--skill-dir') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        console.log(JSON.stringify({ ok: false, op: 'setup', code: 'invalid-args', error: '--skill-dir 缺值', next: '用 --skill-dir <目录> 指定技能安装目录' }));
+        process.exitCode = 1;
+        return;
+      }
+      a.dirs.push(value);
+      i++;
+    }
     else if (x === '--no-deps') a.noDeps = true;
     else if (x === '--no-doctor') a.noDoctor = true;
     else if (x === '--list') a.list = true;
+    else if (x === '--include-vc') a.includeVc = true;
+    else if (x === '--with-system-deps') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        console.log(JSON.stringify({ ok: false, op: 'setup', code: 'invalid-args', error: '--with-system-deps 缺值', next: '用 --with-system-deps <vc,tesseract,poppler,pandoc,officecli|all>（系统依赖默认不装，这是显式 opt-in）' }));
+        process.exitCode = 1;
+        return;
+      }
+      a.sysDeps = value;
+      i++;
+    }
+    else {
+      console.log(JSON.stringify({ ok: false, op: 'setup', code: 'invalid-args', error: `未知参数：${x}`, next: '检查 setup.js 参数拼写' }));
+      process.exitCode = 1;
+      return;
+    }
   }
   const steps = [];
   const detected = detectSkillDirs().filter((d) => fs.existsSync(d));
@@ -78,6 +114,15 @@ function main(argv) {
     console.log(JSON.stringify({ ok: true, op: 'setup-list', detectedSkillDirs: detected, note: '用 --skill-dir 显式指定，或直接跑 node setup.js 装进第一个已存在的目录' }));
     return;
   }
+
+  // 0) Node 版本前置拦截（旧 Node 不浪费一次 npm install）
+  const [nodeMaj, nodeMin] = process.versions.node.split('.').map(Number);
+  if (!(nodeMaj > 22 || (nodeMaj === 22 && nodeMin >= 19))) {
+    console.log(JSON.stringify({ ok: false, op: 'setup', code: 'node-too-old', error: `Node 版本过低：${process.version}（需 >=22.19.0）`, next: '先升级 Node 再跑 setup.js' }));
+    process.exit(1);
+  }
+  // 0.5) 非 Windows 显式声明（VC++ 运行库探针必 FAIL 属预期，不阻断安装）
+  if (process.platform !== 'win32') steps.push({ step: 'platform', ok: true, detail: `WARN 非 Windows（${process.platform}）：VC++ 运行库探针必 FAIL 属预期；依赖照装，功能仅在 Windows 实测` });
 
   // 1) 依赖
   if (!a.noDeps) {
@@ -88,8 +133,9 @@ function main(argv) {
     steps.push({ step: 'npm install', ok: true, detail: '按 --no-deps 跳过' });
   }
 
-  // 2) 技能卡（显式目录优先，多目录都装；没显式就装进第一个探测到的）
+  // 2) 技能卡（显式目录优先，多目录都装；没显式就装进第一个探测到的，其余明示为 skipped）
   const targets = a.dirs.length ? a.dirs : (detected.length ? [detected[0]] : []);
+  const skippedSkillDirs = a.dirs.length ? [] : detected.slice(1);
   if (!targets.length) {
     steps.push({ step: 'skill install', ok: false, detail: '没探测到任何 agent 技能目录，也没给 --skill-dir——技能卡未装（装置本身已可用，用 node dockit.js 调用）' });
   } else {
@@ -97,6 +143,16 @@ function main(argv) {
       const r = installSkill(dir);
       steps.push({ step: 'skill install → ' + dir, ok: r.ok, detail: r.ok ? (r.backedUp ? '已装（旧卡备份于 ' + path.basename(r.backedUp) + '）' : '已装') : r.error });
     }
+  }
+
+  // 2.5) 系统依赖（显式 opt-in 才跑：委托 install-system-deps.js；获取参数经 SYSDEPS_* 环境变量给）
+  if (a.sysDeps) {
+    const sysArgs = [path.join(ROOT, 'install-system-deps.js'), '--components', a.sysDeps, '--yes'];
+    if (a.includeVc) sysArgs.push('--include-vc');
+    const s = spawnSync(process.execPath, sysArgs, { encoding: 'utf8', cwd: ROOT, timeout: 1800000 });
+    let sj = null;
+    try { sj = JSON.parse((String(s.stdout || '') + '\n' + String(s.stderr || '')).split(/\r?\n/).filter(Boolean).pop()); } catch {}
+    steps.push({ step: 'system deps → ' + a.sysDeps, ok: !!(sj && sj.ok), detail: sj ? (sj.ok ? '系统依赖 assisted 安装完成（doctor 验收见下一步）' : `拒绝/失败：${sj.code || ''} ${sj.error || ''}`.slice(0, 160)) : '子进程没出 JSON（异常）' });
   }
 
   // 3) doctor 验收
@@ -109,7 +165,7 @@ function main(argv) {
   }
 
   const ok = steps.every((s) => s.ok);
-  console.log(JSON.stringify({ ok, op: 'setup', steps, note: '系统侧可选依赖（Tesseract/Poppler/Pandoc/OfficeCLI）按 doctor 的 WARN 逐条指路安装；OCR/渲染等命令缺件时回 unavailable 不误出半成品' }, null, 1));
+  console.log(JSON.stringify({ ok, op: 'setup', steps, skippedSkillDirs, note: '系统侧可选依赖（Tesseract/Poppler/Pandoc/OfficeCLI）按 doctor 的 WARN 逐条指路安装；OCR/渲染等命令缺件时回 unavailable 不误出半成品' }, null, 1));
   process.exit(ok ? 0 : 1);
 }
 

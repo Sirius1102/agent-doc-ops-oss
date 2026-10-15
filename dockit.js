@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * dockit.js — 本机文档操作装置（项目：Agent文档操作）
- * 版本：v3.0.1（版本号同步清单见 项目总览.md 第六节）
+ * 版本：v3.2.0（版本号同步面：package.json / 本文件 VERSION / README 版本行）
  *
  * 职责：把 @deepseek-ai/libreoffice-kit 的预编译 LibreOffice 引擎包成「绝对路径 + 一条命令 + 一份 JSON」，
- *       让本机任何 agent（Qoder / ZCode / Codex / LobsterAI / DeepSeek Harness / WorkBuddy…）不读源码就能
- *       安全地转换、渲染、重算、体检 Office 文档，并在交付前给出字体与元数据的自曝证据。
+ *       让可运行 Node 命令的 Agent 按 CLI/JSON 契约集成，安全地转换、渲染、重算、体检 Office 文档，
+ *       并在交付前给出字体与元数据的自曝证据。
  * 依赖：只依赖同目录 node_modules 里的 kit（钉 KIT_VERSION）；其余一律 Node 标准库（含手写 ZIP 读写，不引第三方压缩包库）。
  *
- * 承重约束（改动前先读 项目总览.md）：
+ * 承重约束（改动前先读 README 与 docs/adr/）：
  *  1) 原件只读。本装置对输入文件零写入；所有产物落 _out/ 或 --out 显式路径。
  *  2) 绝不覆盖输出。kit 自身用独占创建（EEXIST 即失败），本装置在选路径时先做去重，避免把"失败"当"成功"。
  *  3) 默认不回显文档正文。体检类命令只给字段名 + 长度 + 哈希（脱敏指南 §1.2 形状探针口径）。
@@ -16,8 +16,8 @@
  */
 
 //#region 配置 / 常量区
-const VERSION = '3.0.1';
-const KIT_VERSION = '0.1.5';            // 实测：npm latest；kit 与引擎包版本独立编号
+const VERSION = '3.2.0';
+const KIT_VERSION = '0.1.5';            // 本仓锁定版本；升级需单独验证
 const ROOT = __dirname;
 const KIT_CLI = ROOT + '/node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js';
 /** R-A（v1.6.4）：kit CLI 解析**函数化**——配置区默认 + `DOCKIT_KIT_CLI` 覆盖 + 自报解析来源（对齐 resolveOfficecliExe 的形状）。
@@ -148,6 +148,8 @@ const FROMMD_DEFAULT_TO = 'docx';
 const REDLINE_DEFAULT_AUTHOR = 'dockit';
 const TABLES_MAX_TABLES = 20;
 const COMPRESS_MIN_STREAM_BYTES = 512;
+// v3.1.0：redact 的 --fill 默认值（black＝画框脱敏；none＝删字留白）——同样钉来源供 CONFIG_CONSTANTS 对账
+const REDACT_DEFAULT_FILL = 'black';
 // v2.8.0：sheetop（xlsx 结构微编辑＋引用重写）的操作族与两条默认值；必须在配置区——CONFIG_CONSTANTS 对账表在文件头部读它们
 const SHEETOP_OPS = ['row-insert', 'col-insert', 'row-move', 'col-move'];
 const SHEETOP_DEFAULT_COUNT = 1;
@@ -180,7 +182,7 @@ const CONFIG_CONSTANTS = {
   DEFAULT_TIMEOUT_MS, DPI_DEFAULT, MAX_PIXEL_TILES, DEFAULT_SHEETS_METHOD, DEFAULT_TO_OUTPUT_EXT,
   DEFAULT_RECALC_OUTPUT_EXT, TESSDATA_DIR, TESSERACT_EXE, OCR_DEFAULT_LANG, VERSION, KIT_VERSION,
   DEFAULT_CHECK_BACKEND, MEDIA_MAX_FILES, BATCH_MAX_ITEMS, BATCH_DEFAULT_TO, BATCH_DEFAULT_CMD, PDFTEXT_DEFAULT_ENC, FROMMD_DEFAULT_TO,
-  MARKDOWN_DEFAULT_WRAP, REDLINE_DEFAULT_AUTHOR, TABLES_MAX_TABLES, COMPRESS_MIN_STREAM_BYTES,
+  MARKDOWN_DEFAULT_WRAP, REDLINE_DEFAULT_AUTHOR, TABLES_MAX_TABLES, COMPRESS_MIN_STREAM_BYTES, REDACT_DEFAULT_FILL,
   SHEETOP_DEFAULT_COUNT, SHEETOP_MAX_SHIFT,
   MAX_INPUT_BYTES_DEFAULT, GC_MIN_AGE_DAYS, GC_DEFAULT_DIR,
 };
@@ -622,7 +624,7 @@ function popplerTool(tool) {
   return { tool, exe: found || cand[cand.length - 1], present: !!found, source: POPPLER_BIN_DIR ? 'env:DOCKIT_POPPLER_BIN' : (found ? 'PATH/同目录推断' : '兜底默认位') };
 }
 function popplerNext(tool) {
-  return `装全 poppler（本机随 pdftoppm 装于 %LOCALAPPDATA%\\Programs\\poppler\\Library\\bin；缺 ${tool} 就把 poppler 装全），或设环境变量 DOCKIT_POPPLER_BIN 指到含 ${tool}${process.platform === 'win32' ? '.exe' : ''} 的 bin 目录（本次解析 ${popplerTool(tool).exe}）。它是原生 CLI、不依赖 Python（ADR-001 不拦）`;
+  return `装全 poppler（本机随 pdftoppm 装于 %LOCALAPPDATA%\\Programs\\poppler\\Library\\bin；缺 ${tool} 就把 poppler 装全），或设环境变量 DOCKIT_POPPLER_BIN 指到含 ${tool}${process.platform === 'win32' ? '.exe' : ''} 的 bin 目录（本次解析 ${popplerTool(tool).exe}）。它是原生 CLI、不依赖 Python（ADR-001 不拦）。🔴 poppler 的 argv 按 ANSI 解码：DOCKIT_POPPLER_BIN 指到含中文的路径必 I/O Error（v3.1.0 实测），bin 目录必须全 ASCII`;
 }
 /** v2.3.0：pandoc（文档→GFM markdown 的摄取后端）。与 poppler/tesseract 同族——原生 CLI、不触 ADR-001，
  *  缺了回 unavailable、doctor 只 WARN，绝不炸裂（外人克隆没装也全绿）。
@@ -1110,7 +1112,7 @@ const HELP = {
   markdown: 'markdown <输入文档> [输出.md] [--wrap none|auto|preserve] [--track-changes accept|reject|all] [--timeout-ms n]：文档→GFM Markdown（docx/odt/pptx/xlsx/csv/tsv/html/htm；pandoc 后端、原生 CLI）——默认不硬折行；--track-changes（仅 docx）三态取修订视图：accept＝接受修订的视图（默认）/reject＝拒绝修订的视图/all＝两个方向都带出（insertion/deletion 标记与 author）；正文只落 .md、不回显进 JSON（与 ocr/pdftext 同隐私口径）；缺 pandoc 回 unavailable 并指路 DOCKIT_PANDOC；.doc/.xls/.ppt 老族先 to 转新族、PDF 取字走 pdftext',
   pipeline: '**多步管线串联**（v2.2.0 立，v2.4.0 扩成**逗号步序列**，v2.7.0 再扩成 **DAG**）：flow＝逗号串联的步序列，步 ∈ `to`/`pages`/`ocr`/`pdftext`（如 `to,pages,ocr`、`to,pdftext`）；旧写法 `to-pages`／`to-pages-ocr` 仍可用；`to` 只能是第一步；`--dag flow.json` 走图执行器——节点带 `id`/`step`/`needs`（依赖）/`args`（子步参数）/`when`（条件谓词，只看上游回报过的 JSON 字段），按拓扑序确定性串行，谓词不成立的节点 skip 并传染下游；🔴 并发明确不做（读数会变成就在测负载而不是测正确性）；逐步子进程、任一步失败即停并报 failedStep',
   redline: '**docx 修订与批注写入**（v2.7.0，纯 ZIP＋XML，不依赖任何后端）：`redline <输入.docx> <insert|delete|comment|accept|reject> [--text 文本] [--match 定位串 | --para N] [--author 名] [--date ISO] [--out 文件]`。insert＝把新文字包进 `w:ins`；delete＝把定位段落的 run 包进 `w:del` 并把 `w:t` 改成 `w:delText`；comment＝写 `word/comments.xml`＋补 `[Content_Types]`/rels＋在段落两端插 `commentRangeStart/End`＋`commentReference`；accept＝保留插入文字、丢弃删除内容并清标记；reject＝丢弃插入、还原 delText 为 w:t。定位串命中多段只改第一段并 warning；🔴 **格式修订（rPrChange/pPrChange 等）**：accept 连标记一起清（＝保留当前格式），reject 只要存在就 `unsupported-format`（把旧属性表贴回来需要可靠的 OOXML 属性回写面，装置没有——硬做就是假还原）。第一步复制成 `_out/<名>-<UTC时间戳>-redlined.docx`，原件只读（前后 sha256 各测一次）；写完**装置自己重新解包对账**：数 `w:ins`/`w:del`/`w:comment`、验 --text 进没进、验 accept/reject 后该留的文字真留、该走的真走——不符就 `code:failed`',
-  redact: '**PDF 真涂黑**（v2.7.0，pdf-lib＋poppler，不依赖 ghostscript/Python）：`redact <输入.pdf> [--needle 串] [--needles 数据.json] [--out 文件]`。三段承重：① 定位＝`pdftotext -bbox` 的词框（装置不自解字形——CID/子集字体的字形解法不是可自证的路）；② 动作＝**从页面内容流里删掉命中位置的 BT…ET 文本绘制组** ＋ 用 pdf-lib 画黑框（只画框不删字＝假脱敏，这一条是本命令存在的理由）；③ 验收＝产物**再用 pdftotext 抽一遍文本层，needle 必须零命中**，命中就 `code:failed` 并点名"这就是假涂黑"。needle 找不到 ⇒ `invalid-output`（找不到就不能宣称涂过）；扫描件无文本层 ⇒ `failed` 指路 pages＋ocr；加密件 ⇒ `unsupported-format`；输入只读、产物新写、永不覆盖。🔴 只删页内容流的文本组：画在 Form XObject、注释外观、附件或 XMP 里的同一串不会被删——验收会抓出来，但**别把"这串没了"推广成"这类信息都清了"**（元数据另走 scrub）',
+  redact: '**PDF 真涂黑／删字留白**（v2.7.0，v3.1.0 加 --fill none；pdf-lib＋poppler，不依赖 ghostscript/Python）：`redact <输入.pdf> [--needle 串] [--needles 数据.json] [--fill black|none] [--out 文件] [--dry-run]`。三段承重：① 定位＝`pdftotext -bbox` 的词框（装置不自解字形——CID/子集字体的字形解法不是可自证的路）；② 动作＝**从页面内容流里删掉命中位置的 BT…ET 文本绘制组** ＋ 默认用 pdf-lib 画黑框（只画框不删字＝假脱敏，这一条是本命令存在的理由）；`--fill none` 时**不画框**＝删字留白——课表/报表/名单这类"把多余条目去掉"的用途，脱敏别用它；③ 验收＝产物**再用 pdftotext 抽一遍文本层，needle 必须零命中**，命中就 `code:failed` 并点名"这就是假涂黑"。needle 找不到 ⇒ `invalid-output`（找不到就不能宣称涂过）；扫描件无文本层 ⇒ `failed` 指路 pages＋ocr；加密件 ⇒ `unsupported-format`；🔴 `/Rotate≠0` 的页前置拒（v3.1.0 实测坐标失配）；输入只读、产物新写、永不覆盖；`--dry-run` 只预览（v3.2.0：报每枚 needle 的命中数/页/框数与产物会落哪，不删不画不写盘）。🔴 只删页内容流的文本组：画在 Form XObject、注释外观、附件或 XMP 里的同一串不会被删——验收会抓出来，但**别把"这串没了"推广成"这类信息都清了"**（元数据另走 scrub）',
   tables: '**PDF 表格抽取 → CSV**（v2.7.0，pdf-lib＋poppler，几何法、可自证）：`tables <输入.pdf> [--dir 目录] [--pages 1-3] [--max-tables n]`。网格来自页面内容流的**矢量线段**（实测 LibreOffice 把 docx 带边框表格画成 m/l：N 行→N+1 条横线、M 列→M+1 条竖线；`re` 也吃），单元格四边都有线才算一个格；文字来自 `pdftotext -bbox` 的词框，按词框中心落在哪个格入格。每表出一个 CSV（带 UTF-8 BOM，Excel 中文不乱码）＋清单（页/行列数/格数/字节/sha256）。🔴 **没有闭合网格就回空清单并明说**——无边框表、图片表、只有横线的表都不猜（宁可不给，不给猜的表）；要字面内容走 `pdftext`，OOXML/ODF 的表直接 `to ... .csv`（引擎导出无损）',
   frommd: '**Markdown 的生产方向**（v2.7.0，md → docx/odt/html/pdf；`markdown` 命令的反向）：`frommd <输入.md> [输出文件] [--to docx|odt|html|pdf] [--title 名] [--css 样式.css] [--timeout-ms n]`。前三者 pandoc 直出（`--sandbox` 起，不吃文件系统副作用）；pdf 走两段＝pandoc 出独立 HTML → 本机无头浏览器 `--print-to-pdf`（Chrome/Edge 任一，`DOCKIT_BROWSER` 可权威覆盖；🔴 不传 `--no-sandbox`，本机实测不需要）。中间 HTML 落**纯 ASCII 临时目录**（poppler 的 argv 中文解码坑同族风险）。写完**装置自己回读产物核对正文**：docx/odt 解包取 `w:t`／`content.xml`、html 去标签、pdf 走 `pdftotext`，样本词一个都没找到 ⇒ `code:failed`（"后端退码 0"不算结论）；找不齐但非零 ⇒ warning 点名"别宣称无损"。输入只读、产物新写、永不覆盖；缺 pandoc/缺浏览器分别 `unavailable`＋指路。pdf 的版式由浏览器定，与 `to`（LibreOffice）不同族，别互相冒充等价产物',
   compress: '**PDF 无损瘦身**（v2.7.0，纯 pdf-lib，**不依赖 ghostscript**）：`compress <输入.pdf> [输出文件] [--min-stream-bytes n]`。两件动作：① **可达性回收**——从 trailer 的 Root/Info/ID 出发做引用闭包，闭包外的间接对象整批删（实测 pdf-lib 自己不做回收，孤儿对象会原样序列化进产物）；② **未压缩流改 deflate**（level 9，压完反而涨的就留原样并计数）。🔴 "无损"不靠宣称：产物**页数相等 ＋ `pdftotext` 抽出的正文与原件逐字相等**，不等就 `code:failed` 并说"别外发"；带 AcroForm 表单/内嵌附件/JavaScript 或 /AA 的件**前置拒**（回收与重写会丢交互层——与 combine/split 同一立场，别把压完的件当原件）；加密件拒（不绕加密）；体积没降是合法结果，照实报 `ratioBytes` 并 warning"别把跑过当压小了"',
@@ -1479,16 +1481,18 @@ const HELP_SPEC = {
     note: '写完由装置**重新解包回读对账**：数 w:ins／w:del／w:comment、验 --text 进没进、验 accept／reject 后"该留的文字真留、该走的真走"（对着**改前的原文**判，不拿改后的自己证明自己）。格式修订（w:rPrChange／w:pPrChange／w:sectPrChange／w:tblPrChange／w:tcPrChange／w:trPrChange／w:numberingChange／w:cellMerge）：accept＝连标记一起清（保留当前格式并 warning），reject＝只要存在就 unsupported-format（装置没有可靠的 OOXML 旧属性回写面，硬做＝假还原）。',
   },
   redact: {
-    usage: 'redact <输入.pdf> [--needle 串] [--needles 数据.json] [--out 文件]',
+    usage: 'redact <输入.pdf> [--needle 串] [--needles 数据.json] [--out 文件] [--fill black|none] [--dry-run]',
     positional: [{ name: '输入文件', required: true, note: '只吃 PDF（按 magic）；输入零写入、产物新写、永不覆盖；加密件 unsupported-format（不绕加密）' }],
     flags: [
       { name: 'max-input-bytes', type: 'int', default: 268435456, defaultFrom: 'MAX_INPUT_BYTES_DEFAULT', note: '本地解包路线的输入体积闸（整件读进内存前先量字节数）：超限回 input-too-large，不落半成品；抬限属放宽规则需机主同意，也可用环境变量 DOCKIT_MAX_INPUT_BYTES；非整数/≤0 的值直接拒（invalid-output），不静默回退默认' },
       { name: 'needle', type: 'string', default: null, defaultNote: '单枚要涂黑的文字。与 --needles 可并存（合并成一组）；一个都不给 ⇒ invalid-output——装置不做"整页抹白"这种看着安全的动作' },
       { name: 'needles', type: 'string', default: null, defaultNote: '**JSON 文件路径**（字符串数组或 {needles:[...]}）；值必须全是非空字符串。🔴 不做模糊匹配：全角／简繁／连字／跨行断词都算不同串' },
+      { name: 'fill', type: 'string', default: 'black', defaultFrom: 'REDACT_DEFAULT_FILL', defaultNote: 'black（默认）＝画黑框＝脱敏（要看得见）；none＝**不画框**＝删字留白（课表/报表/名单这类"把多余条目去掉"的用途，v3.1.0 新增；复用同一套 locate+delete+verify，验收不变：needle 仍必须零命中）' },
       { name: 'out', type: 'string', default: null, defaultNote: '省略＝落 _out/<名>-<UTC时间戳>-redacted.pdf；已存在 invalid-output；与输入同路径直接拒' },
+      { name: 'dry-run', type: 'boolean', default: false, note: '试运行（v3.2.0 新增）：只定位＋旋转检查，不删不画不写盘；报每枚 needle 的命中数/页/框数、会落笔的页、产物会落哪（wouldWriteTo）；needle 找不到或页带旋转只在预览里点名（wouldSucceed=false），正常跑才拒收' },
     ],
     codes: ['input-too-large', 'invalid-document', 'unsupported-format', 'invalid-output', 'unavailable', 'failed'],
-    note: '🔴 **三段承重**：定位＝poppler `pdftotext -bbox` 的词框（装置不自解字形）；动作＝删掉页面内容流里命中的 BT…ET 文本绘制组 ＋ pdf-lib 画黑框（**只画框不删字＝假脱敏**，这一条是本命令存在的理由）；验收＝产物再抽一遍文本层，needle 必须**零命中**，命中就 code:failed 并点名"这就是假涂黑"。needle 找不到 ⇒ invalid-output（找不到就不能宣称涂过）；无文本层（扫描件）⇒ failed 指路 pages＋ocr。只删页内容流的文本组：Form XObject、注释外观（AP）、附件与 XMP 里的同一串不会被删——验收会抓出来，但别把"这串没了"推广成"这类信息都清了"。',
+    note: '🔴 **三段承重**：定位＝poppler `pdftotext -bbox` 的词框（装置不自解字形）；动作＝删掉页面内容流里命中的 BT…ET 文本绘制组 ＋ pdf-lib 画黑框（**只画框不删字＝假脱敏**，这一条是本命令存在的理由；--fill none 时只删不画＝删字留白，脱敏别用它）；验收＝产物再抽一遍文本层，needle 必须**零命中**，命中就 code:failed 并点名"这就是假涂黑"。needle 找不到 ⇒ invalid-output（找不到就不能宣称涂过）；无文本层（扫描件）⇒ failed 指路 pages＋ocr。🔴 /Rotate≠0 的页**前置拒**（v3.1.0 实测：bbox 词框与内容流坐标差一个随旋转变化的常数，删了别的字验收还可能通过——先 pageops rotate 转正再来）。只删页内容流的文本组：Form XObject、注释外观（AP）、附件与 XMP 里的同一串不会被删——验收会抓出来，但别把"这串没了"推广成"这类信息都清了"。',
   },
   tables: {
     usage: 'tables <输入.pdf> [--dir 目录] [--pages 1-3] [--max-tables n]',
@@ -1516,7 +1520,7 @@ const HELP_SPEC = {
       { name: 'timeout-ms', type: 'int', default: 120000, defaultFrom: 'DEFAULT_TIMEOUT_MS', note: 'pandoc 与浏览器两步共用这一份单步预算' },
     ],
     codes: ['input-too-large', 'invalid-document', 'unsupported-format', 'invalid-output', 'unavailable', 'timeout', 'failed'],
-    note: '🔴 写完装置**自己回读产物核对正文**：docx/odt 解包取 w:t／content.xml 文字、html 去标签、pdf 用 pdftotext 抽文本；样本词**一个都没找到** ⇒ code:failed（"后端退码 0"不算结论，这条与 edit／merge／pdfform 同口径）；找不齐但非零 ⇒ warning 点名"别宣称无损"。缺 pandoc ⇒ unavailable＋指路 DOCKIT_PANDOC；--to pdf 缺浏览器 ⇒ unavailable＋指路 DOCKIT_BROWSER；缺 pdftotext 时 pdf 产物**拒绝出货**（没验证过的产物不许当已核验交付）。',
+    note: '🔴 写完装置**自己回读产物核对正文**：docx/odt 解包取 w:t／content.xml 文字、html 去标签、pdf 用 pdftotext 抽文本；样本词**一个都没找到** ⇒ code:failed（"后端退码 0"不算结论，这条与 edit／merge／pdfform 同口径）；找不齐但非零 ⇒ warning 点名"别宣称无损"。缺 pandoc ⇒ unavailable＋指路 DOCKIT_PANDOC；--to pdf 缺浏览器 ⇒ unavailable＋指路 DOCKIT_BROWSER；缺 pdftotext 时 pdf 产物**拒绝出货**（没验证过的产物不许当已核验交付）。输出路径含非 ASCII 时 pdf 面走 ASCII 临时目录中转（v3.1.0：Chromium 的 argv 链路不冒 poppler 那条 ANSI 坑的险）。',
   },
   compress: {
     usage: 'compress <输入.pdf> [输出文件] [--min-stream-bytes n]',
@@ -1532,10 +1536,11 @@ const HELP_SPEC = {
     note: '🔴 **不依赖 ghostscript／qpdf／Python**，纯 pdf-lib：① 可达性回收（从 trailer 的 Root/Info/ID 做引用闭包，闭包外的间接对象整批删——实测 pdf-lib 自己不做回收，孤儿对象会原样序列化进产物）；② 未压缩流改 deflate level 9。声称"无损"必须证：产物**页数相等 ＋ pdftotext 抽出的正文与原件逐字相等**，不等就 code:failed 并说"别外发"。带 AcroForm 表单／内嵌附件／JavaScript 或 /AA 的件**前置拒**（回收与重写会丢交互层——与 combine/split 同一立场）；pdftotext 不在位时**拒绝出货**（没核验就不叫无损）。体积没降是合法结果，照实报 ratioBytes ＋ warning。',
   },
   help: {
-    usage: 'help [命令] [--json]',
+    usage: 'help [命令] [--json] [--brief]',
     positional: [{ name: '命令', required: false, note: '给一个命令名＝出该命令的结构化 spec；给未知名字＝带最近邻候选后失败退出（不落半成品）' }],
     flags: [
       { name: 'json', type: 'boolean', default: false, note: '装置的输出**本来就恒是一行 JSON**，这个开关只表示"按结构化 spec 出全部命令"（不传＝出命令清单）' },
+      { name: 'brief', type: 'boolean', default: false, note: '首读索引（v3.1.0）：命令名＋一句话＋是否写盘（writes=true 写盘/写文件系统），每条一行；全量结构化 spec 用 --json（输出 ≈68 KB，终端只看得到尾巴）' },
     ],
     codes: ['invalid-output'],
   },
@@ -1552,7 +1557,7 @@ function cmdDoctor(args) {
   const kcD = resolveKitCli();
   // 公开树版（v3.0.1 开源化轮）：绝对路径不进命令输出（运行时出口）——只报"在位/缺失 + 解析来源类别"。
   const shortSrc = (s) => String(s).includes('node_modules') ? 'node_modules 内' : String(s).includes('env') ? '环境变量' : String(s);
-  push('kit-cli-exists', kcD.present, kcD.present ? `在位（${shortSrc(kcD.source)}）` : `缺失（解析自 ${kcD.source}）`);
+  push('kit-cli-exists', kcD.present, kcD.present ? `在位（${shortSrc(kcD.source)}）` : `缺失（来源：${shortSrc(kcD.source)}）`);
   let kitPkg = null; try { kitPkg = JSON.parse(fs.readFileSync(ROOT + '/node_modules/@deepseek-ai/libreoffice-kit/package.json', 'utf8')); } catch {}
   push(`kit-version==${KIT_VERSION}`, kitPkg?.version === KIT_VERSION, kitPkg?.version || '缺失');
   // 🔴 v1.7.1 守卫：这半句此前是裸的——`node_modules` 整棵不在位时它抛 ENOENT，被顶层兜成"装置内部异常"，
@@ -1565,7 +1570,7 @@ function cmdDoctor(args) {
   const want = `libreoffice-kit-${process.platform}-${process.arch}`;
   push(`engine-package(${want})`, eng.includes(want), engWhy ? `读 ROOT/node_modules/@deepseek-ai 失败 ${engWhy}（引擎整棵缺失＝装置半瘫，转换/渲染面回 unavailable，跑 npm ci）` : (eng.join(',') || '无'));
   const caps = runKit(['capabilities']);
-  push('capabilities-ok', caps.ok === true, caps.ok ? `backend=${caps.runtime?.backend} runtime=${caps.runtime?.version}` : caps.error);
+  push('capabilities-ok', caps.ok === true, caps.ok ? `backend=${caps.runtime?.backend} runtime=${caps.runtime?.version}` : `kit capabilities 调用失败（${caps.code || '无错误码'}）`);
   if (caps.ok) {
     const m = caps.conversions || [];
     const flat = {}; for (const c of m) { const fam = c.inputs.includes('docx') ? 'word' : c.inputs.includes('xlsx') ? 'sheet' : 'slide'; flat[fam] = { inputs: c.inputs, outputs: c.outputs }; }
@@ -1594,7 +1599,7 @@ function cmdDoctor(args) {
   try { fm = JSON.parse(fs.readFileSync(FM_PATH, 'utf8')); } catch (e) { fmWhy = String((e && e.code) || e); }
   const hostNow = process.env.COMPUTERNAME || '';
   if (!fm || !Array.isArray(fm.files) || !fm.files.length) {
-    push('substitute-fonts-present', absent.length === 0, `登记清单不可用（${FM_PATH}：${fmWhy || 'files 字段缺失'}）→ 退回核 ${SENTINELS.length} 个通用替身名：` + (absent.length ? `缺 ${absent.length}/${SENTINELS.length}: ${absent.join(', ')}（声明这些族的文档版式会变，跑 node test/font-baseline.js check 看差异）` : `${SENTINELS.length}/${SENTINELS.length} 在位`), absent.length === 0);
+    push('substitute-fonts-present', absent.length === 0, `登记清单不可用（读取失败：${fmWhy || 'files 字段缺失'}）→ 退回核 ${SENTINELS.length} 个通用替身名：` + (absent.length ? `缺 ${absent.length}/${SENTINELS.length}: ${absent.join(', ')}（声明这些族的文档版式会变，跑 node test/font-baseline.js check 看差异）` : `${SENTINELS.length}/${SENTINELS.length} 在位`), absent.length === 0);
   } else if (fm.标定机器 && fm.标定机器 !== hostNow) {
     // 公开树版（v3.0.1 开源化轮）：机器名不进命令输出——占位符或非标定机器一律报「非标定机器」，
     // 不回显主机名本身（hostNow 是运行时出口，外人分享 doctor 输出时会带上本机名）。
@@ -1603,23 +1608,23 @@ function cmdDoctor(args) {
     let checked = 0;
     const miss = fm.files.filter((x) => { checked++; return !fs.existsSync(path.join(fdir, x.name)); });
     push('substitute-fonts-present', miss.length === 0, miss.length
-      ? `缺 ${miss.length}/${fm.files.length}（已核 ${checked}）: ${miss.slice(0, 8).map((x) => x.name).join(', ')}${miss.length > 8 ? ' …' : ''}（声明这些族的文档版式会变；回灌源 ${fm.来源}；真实差异跑 node test/font-baseline.js check）`
-      : `${fm.files.length}/${fm.files.length} 在位 @ ${fdir}（已核 ${checked}；清单 ${fm.stamp}／来源 sha256 ${String(fm.来源sha256 || '').slice(0, 12)}）`);
+      ? `缺 ${miss.length}/${fm.files.length}（已核 ${checked}）: ${miss.slice(0, 8).map((x) => x.name).join(', ')}${miss.length > 8 ? ' …' : ''}（声明这些族的文档版式会变；按 README 配置字体源后复验；真实差异跑 node test/font-baseline.js check）`
+      : `${fm.files.length}/${fm.files.length} 在位（已核 ${checked}）`);
   }
   const vcr = vcRedistPresent();
-  push('msvc-v14-redist', vcr.found, vcr.detail);
+  push('msvc-v14-redist', vcr.found, vcr.found ? 'VC++ v14 运行库在位' : '未找到 VC++ v14 运行库（kit 的 Windows 原生引擎需要它，见 README 使用限制）');
   // Tesseract 哨兵（v1.4.0，ADR-001）：ocr 的外部依赖。不在位报 WARN 不 FAIL——外人克隆、没装的机器
   // doctor 与 selftest 依旧全绿，ocr 判据逐条 SKIP（降级形状由「ocr 降级」判据用环境变量假路径覆盖）。
   const tp = tesseractProbe();
-  push('tesseract-ocr', true, tp.available ? `${tp.version} / langs=${tp.langCount ?? '?'} @ ${tp.langPack}` : `不在位：${tp.why} —— ocr 不可用（ocr 判据将逐条 SKIP）`, !tp.available);
+  push('tesseract-ocr', true, tp.available ? `在位（langs=${tp.langCount ?? '?'}）` : '不在位（需配置 DOCKIT_TESSERACT；ocr 判据将逐条 SKIP）', !tp.available);
   // v1.7.0：中文语言包单独一条，不埋在上一行的 langs=N 计数里。起因是这份包一直躺在 gitignore 的
   // _out/tessdata-best 上，而 2026-10-07 19:40 那次清扫把同类的 _probe/ 整目录连 node_modules 一起带走了——
   // 看不见的位置就会静默失效。形状仍是 **WARN 不 FAIL**：「这台机器装没装中文包」是机器事实，
   // 做成 FAIL 会打穿「外人克隆首跑全绿」（总览第八节第 20 条同族），所以它只自报解析到的目录与清单。
   const chiSimPresent = !!(tp.available && Array.isArray(tp.langs) && tp.langs.includes('chi_sim'));
   push('ocr-lang-pack', true, chiSimPresent
-    ? `chi_sim 在位 @ ${TESSDATA_DIR}（本次 langs=${tp.langs.join('/')}）`
-    : `chi_sim 不在本次解析到的 tessdata @ ${TESSDATA_DIR}（langs=${Array.isArray(tp.langs) ? (tp.langs.join('/') || '(空)') : '未读出'}）——要读中文就先装 chi_sim.traineddata；${ocrNextUnavailable()}`,
+    ? `chi_sim 在位（本次 langs=${tp.langs.join('/')}）`
+    : `chi_sim 不在本次 tessdata 配置中（langs=${Array.isArray(tp.langs) ? (tp.langs.join('/') || '(空)') : '未读出'}）——要读中文就先装 chi_sim.traineddata 并配置 DOCKIT_TESSDATA`,
     !chiSimPresent);
   // 写后端哨兵（v1.6.0 R6，ADR-002）：同一条降级形状——不在位报 **WARN 不 FAIL**，`edit`/`merge` 回 unavailable，
   // 相关判据逐条 SKIP，没装它的机器上 doctor 与 selftest 依旧全绿。自报**解析来源**（配置区默认 vs 环境变量），
@@ -1627,8 +1632,8 @@ function cmdDoctor(args) {
   const ocli = officecliVersion();
   const ores = resolveOfficecliExe();
   push('officecli-write-backend', true, ocli.available
-    ? `v${ocli.version} @ ${ores.exe}（解析来源：${ores.source}；隔离 env：${Object.entries(OFFICECLI_ISOLATION_ENV).map(([k, v]) => k + '=' + v).join(' ')}；动词白名单：${OFFICECLI_VERB_ALLOW.join('/')}）`
-    : `不在位：${ores.source} 解析到 ${ores.exe} 且该路径不存在 —— edit/merge 不可用（相关判据将逐条 SKIP；装法与边界见 docs/adr/ADR-002）`, !ocli.available);
+    ? `在位（配置来源：${ores.source}；隔离 env：${Object.entries(OFFICECLI_ISOLATION_ENV).map(([k, v]) => k + '=' + v).join(' ')}；动词白名单：${OFFICECLI_VERB_ALLOW.join('/')}）`
+    : `不在位（配置来源：${ores.source}）—— edit/merge 不可用（相关判据将逐条 SKIP；装法与边界见 docs/adr/ADR-002）`, !ocli.available);
   // v1.9.0：combine/split 的纯 JS 依赖（pdf-lib，已进 package.json dependencies）。缺失＝这两条命令回
   // unavailable；它是 npm 依赖类（与 kit 同层），按 FAIL 报——npm install 之后必然在位，红得起的才是真依赖。
   let pdfLibVer = null; let pdfLibWhy = '';
@@ -1762,7 +1767,7 @@ function pagesFromPoppler(input, dir, flags) {
   pa.push(input, 'page');
   const rr = spawnSync(pt.exe, pa, { encoding: 'utf8', cwd: dir, timeout: DEFAULT_TIMEOUT_MS });
   if (rr.signal === 'SIGTERM') die('timeout', 'pdftoppm 降级渲染超预算', nextFor('timeout', {}));
-  if (rr.status !== 0) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} die('invalid-document', `pdftoppm 降级渲染失败：${String(rr.stderr || rr.stdout).trim().slice(0, 140)}`, '先 inspect 看容器'); }
+  if (rr.status !== 0) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} die('invalid-document', `pdftoppm 降级渲染失败：${String(rr.stderr || rr.stdout).trim().slice(0, 140)}${/I\/Error/i.test(String(rr.stderr || '')) ? '（🔴 若本机 poppler 装在含中文的路径下，这是 poppler argv ANSI 解码坑：把 poppler 挪到全 ASCII 路径并用 DOCKIT_POPPLER_BIN 指过去——v3.1.0 实测）' : ''}`, '先 inspect 看容器'); }
   const numOf = (n) => Number((n.match(/(\d+)\.png$/i) || [, 0])[1]);
   const names = fs.readdirSync(dir).filter((n) => /\.png$/i.test(n) && fs.statSync(path.join(dir, n)).isFile()).sort((a, b) => numOf(a) - numOf(b));
   const images = names.map((n, i) => {
@@ -2954,11 +2959,18 @@ function cmdHelp(args) {
     out({ ok: true, op: 'help', mode: 'command', version: VERSION, kitVersion: KIT_VERSION, command: name, summary: HELP[name], usage: sp.usage, positional: sp.positional, flags: sp.flags, codes: sp.codes, globalFlags: GLOBAL_FLAGS, note: sp.note });
     return;
   }
-  if (flags.json === true) {
-    out({ ok: true, op: 'help', mode: 'all-structured', version: VERSION, kitVersion: KIT_VERSION, entry: __filename, globalFlags: GLOBAL_FLAGS, commands: Object.keys(HELP_SPEC).map((k) => ({ command: k, summary: HELP[k], usage: HELP_SPEC[k].usage, positional: HELP_SPEC[k].positional, flags: HELP_SPEC[k].flags, codes: HELP_SPEC[k].codes, note: HELP_SPEC[k].note })) });
+  if (flags.brief === true) {
+    // v3.1.0：首读索引——命令名＋一句话＋是否写盘（writes），每条一行、≈4.5 KB。
+    // 写盘清单 = 第一时间决定"产物落哪"的最小集合（redact/edit/gc 这类"写错不可见"的命令一眼可辨）。
+    const WRITES = { to: true, pages: true, ocr: true, recalc: true, scrub: true, edit: true, merge: true, media: true, batch: true, combine: true, split: true, pdftext: true, pageops: true, pipeline: true, markdown: true, pdfform: true, redline: true, redact: true, tables: true, frommd: true, compress: true, sheetop: true, gc: true };
+    out({ ok: true, op: 'help', mode: 'brief', version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), commands: Object.keys(HELP_SPEC).map((k) => ({ command: k, summary: HELP[k].split('。')[0].split('：')[0].slice(0, 70), writes: !!WRITES[k], detail: `help ${k}` })) });
     return;
   }
-  out({ ok: true, version: VERSION, kitVersion: KIT_VERSION, entry: __filename, commands: Object.keys(HELP).map((k) => `${k}  ${HELP[k]}`) });
+  if (flags.json === true) {
+    out({ ok: true, op: 'help', mode: 'all-structured', version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), globalFlags: GLOBAL_FLAGS, commands: Object.keys(HELP_SPEC).map((k) => ({ command: k, summary: HELP[k], usage: HELP_SPEC[k].usage, positional: HELP_SPEC[k].positional, flags: HELP_SPEC[k].flags, codes: HELP_SPEC[k].codes, note: HELP_SPEC[k].note })) });
+    return;
+  }
+  out({ ok: true, version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), commands: Object.keys(HELP).map((k) => `${k}  ${HELP[k]}`) });
 }
 
 /** R6 写能力（ADR-002 §三-3）：承重 1"原件只读"的守法形状——
@@ -3165,12 +3177,21 @@ function cmdPdftext(args) {
   else outPath = freePath(OUT_DIR, `${path.basename(input, '.' + extOf(input))}-text-${stamp()}`, 'txt');
   const tl = popplerTool('pdftotext');
   if (!tl.present) die('unavailable', `pdftotext 不在位（${tl.source} 解析：${tl.exe}）`, popplerNext('pdftotext'));
+  // v3.1.0：--out 的输出路径全 ASCII 才交给 poppler（argv 按 ANSI 解码，含中文必 I/O Error 退码 2）。
+  // poppler 是唯一吃 --out 直通路径的命令面后端（combine/split 等 PDF 写面走 pdf-lib 的 Buffer，不经 argv）。
+  // 兜底形态：把 ASCII 临时文件让 poppler 写，装置再搬回调用方要的落点（搬移是同卷 rename 或 copy+verify，输入零写入不变）。
+  let popplerOut = outPath;
+  if (!/^[\x21-\x7E]+$/.test(outPath)) {
+    const tmpO = asciiTmpDir('ptx');
+    popplerOut = path.join(tmpO, 'out.txt');
+    void tmpO; // tmpO 只活在闭包内；搬回逻辑在 spawn 之后按 popplerOut !== outPath 判
+  }
   const enc = flags.enc !== undefined && flags.enc !== null ? String(flags.enc) : 'UTF-8';
   const pargs = ['-enc', enc];
   if (flags.layout) pargs.push('-layout');
   if (firstPage !== null) pargs.push('-f', String(firstPage));
   if (lastPage !== null) pargs.push('-l', String(lastPage));
-  pargs.push(input, outPath);
+  pargs.push(input, popplerOut);
   const r = spawnSync(tl.exe, pargs, { encoding: 'utf8', timeout: timeoutMs });
   if (r.signal === 'SIGTERM') die('timeout', `pdftotext 超预算（--timeout-ms=${timeoutMs}）`, nextFor('timeout', {}));
   if (r.error) die('failed', `pdftotext 进程调用失败：${String(r.error).slice(0, 160)}`, 'ENOENT 多半是 DOCKIT_POPPLER_BIN 指错；其它看 error 原文');
@@ -3179,13 +3200,14 @@ function cmdPdftext(args) {
     if (/password|encrypt/i.test(err)) die('unsupported-format', `PDF 加密，pdftotext 读不了：${err.slice(0, 120)}`, '先解密再取文本层；装置不绕加密');
     die('invalid-document', `pdftotext 读不了这份 PDF：${err.slice(0, 160)}`, '坏件或非标准 PDF；先 inspect 看容器');
   }
+  if (popplerOut !== outPath) { try { fs.copyFileSync(popplerOut, outPath); try { fs.rmSync(path.dirname(popplerOut), { recursive: true, force: true }); } catch { } } catch (e) { die('failed', `ASCII 中转失败（poppler 已写出、装置搬回时错）：${String(e.message).slice(0, 120)}`, '把本行 JSON 原样回报；中间件在系统 Temp 的 dockit-ptx-* 目录'); } }
   const txt = fs.existsSync(outPath) ? str(fs.readFileSync(outPath)) : '';
   const lines = txt.split(/\r?\n/).filter((x) => x.trim() !== '');
   const chars = lines.reduce((a, x) => a + x.length, 0);
   const pageBreaks = (txt.match(/\f/g) || []).length;
   const warnings = [];
   if (chars === 0) warnings.push('文本层为空：这份 PDF 很可能是扫描件/纯图片（没有可提取的文字层）。请改走 pages 渲染＋ocr，别把空 txt 当成"文档无字"');
-  out({ ok: true, op: 'pdftext', backend: 'poppler/pdftotext', tool: tl.exe, toolSource: tl.source, input: { path: input, bytes: buf.length, sha256: sha256(buf) }, file: outPath, requestedPages: flags.pages !== undefined && flags.pages !== null ? String(flags.pages) : 'all', firstPage, lastPage, chars, lines: lines.length, pageBreaks, ms: Date.now() - t0, warnings: warnings.length ? warnings : undefined, note: '提取的是 PDF 内嵌文本层（数字 PDF 直取、免 OCR）；文本只落 txt 文件、不回显进 JSON（与 ocr 同一隐私口径）。空文本层是数据不是错误，按 warnings 改走 OCR' });
+  out({ ok: true, op: 'pdftext', backend: 'poppler/pdftotext', tool: tl.exe, toolSource: tl.source, input: { path: input, bytes: buf.length, sha256: sha256(buf) }, file: outPath, requestedPages: flags.pages !== undefined && flags.pages !== null ? String(flags.pages) : 'all', firstPage, lastPage, chars, lines: lines.length, pageBreaks, ...(popplerOut !== outPath ? { asciiTmpReroute: true } : {}), ms: Date.now() - t0, warnings: warnings.length ? warnings : undefined, note: '提取的是 PDF 内嵌文本层（数字 PDF 直取、免 OCR）；文本只落 txt 文件、不回显进 JSON（与 ocr 同一隐私口径）；--out 给非 ASCII 路径时走 ASCII 临时目录中转（poppler argv ANSI 坑，v3.1.0）。空文本层是数据不是错误，按 warnings 改走 OCR' });
 }
 
 /** v2.1.0 media 的 PDF 半边：poppler pdfimages -all 按原始格式抽内嵌光栅图（不重编码）。
@@ -3235,7 +3257,7 @@ function mediaFromPdf(input, buf, flags, t0) {
   const modeArg = reencode === 'jpeg' ? '-j' : '-all';
   // 输出前缀只给 ASCII 的 'img'、产物目录走 spawn 的 cwd（CreateProcess 宽字符，不经子进程 argv 解码）：
   // 实测 poppler 的 pdfimages 把含中文的**输出前缀 argv** 按 ANSI 解成乱码（I/O Error: Couldn't open image file
-  // 'D:\<e5><b7>…\img-000.png'），而 -list 读中文输入正常。cwd 宽字符 + ASCII 前缀绕开这个 argv 解码坑。
+  // 'D:\<非ASCII路径>…\img-000.png'），而 -list 读中文输入正常。cwd 宽字符 + ASCII 前缀绕开这个 argv 解码坑。
   const er = spawnSync(pi.exe, [modeArg, input, 'img'], { encoding: 'utf8', timeout: DEFAULT_TIMEOUT_MS, cwd: dir });
   if (er.signal === 'SIGTERM') die('timeout', `pdfimages 抽图超预算（预算 ${DEFAULT_TIMEOUT_MS}ms）`, nextFor('timeout', {}));
   if (er.error) die('failed', `pdfimages 抽图进程失败：${String(er.error).slice(0, 160)}`, '看 error 原文');
@@ -3946,7 +3968,7 @@ const specOf = (cmd) => (cmd && Object.prototype.hasOwnProperty.call(HELP_SPEC, 
 //#region v2.7.0 生产与瘦身面：frommd / compress
 /** v2.7.0：poppler 的中间件一律落**纯 ASCII 临时目录**（os.tmpdir()）并用 ASCII 文件名。
  *  实测：pdftotext 的 -bbox 输出参数给中文绝对路径时，argv 被按 ANSI 解成乱码 ⇒ "I/O Error: Couldn't open text file
- *  'D:/<e5><b7><a5>…'"、退码 2；而 pdfimages 的输出前缀同族（media 里已用 cwd+ASCII 前缀绕开）。
+ *  'D:/<非ASCII路径>…'"、退码 2；而 pdfimages 的输出前缀同族（media 里已用 cwd+ASCII 前缀绕开）。
  *  输入侧的中文路径实测正常，所以只挪"输出"这一半。系统的 Temp 目录一般是纯 ASCII（中文绝对路径在输出侧才出坑）。 */
 function asciiTmpDir(tag) { return ensureDir(path.join(require('node:os').tmpdir(), 'dockit-' + tag + '-' + stamp() + '-' + process.pid)); }
 /** v2.7.0：无头浏览器（HTML→PDF 的排版引擎）。与 poppler/pandoc/tesseract 同族——纳管本机原生可执行文件，
@@ -3980,7 +4002,7 @@ function requirePandoc() {
   if (!pd.present) die('unavailable', `pandoc 不在位（${pd.source} 解析：${pd.exe}）`, pandocNext());
   return pd;
 }
-function browserNext() { const b = browserTool(); return `装任一 Chromium 系浏览器（本机 Chrome／Edge 皆可），或设环境变量 DOCKIT_BROWSER 指到 exe 完整路径（本次解析 ${b.exe}）。它是原生 CLI、headless 不起界面；只要 docx/odt/html 不装它也行：--to docx|odt|html`; }
+function browserNext() { const b = browserTool(); return `装任一 Chromium 系浏览器（本机 Chrome／Edge 皆可），或设环境变量 DOCKIT_BROWSER 指到 exe 完整路径（本次解析 ${b.exe}）。它是原生 CLI、headless 不起界面；只要 docx/odt/html 不装它也行：--to docx|odt|html。🔴 该 exe 的解析路径必须全 ASCII（v3.1.0 登记：装置把 --print-to-pdf 的产物路径恒落全 ASCII 的 _out 或 --out；但 exe 本体若在含中文的目录下，浏览器自己的宽字符链路没有装置兜底，先把它挪到 ASCII 路径再指过来）`; }
 /** v2.7.0：Markdown 的**生产方向**（md → docx/odt/html/pdf），与 `markdown`（摄取向）互为反向。
  *  前三者 pandoc 直出；pdf 走两段（pandoc 出独立 HTML → 本机无头浏览器 print-to-pdf）。
  *  🔴 承重：写完装置**自己回读产物核对正文样本词**——"后端退码 0"不算结论（edit／merge／pdfform／scrub 同口径）。 */
@@ -4063,16 +4085,21 @@ function cmdFrommd(args) {
   if (to === 'pdf') {
     const br = browserTool();
     if (br.missing) die('unavailable', `无头浏览器不在位（${br.source} 解析：${br.exe}）——pdf 走两段（pandoc 出 HTML → 浏览器印 PDF）`, browserNext());
+    // v3.1.0：--print-to-pdf 的产物路径走 ASCII 中转（Chromium 的宽字符 argv 链路本机未测过含中文目的路径，
+    // 与 poppler 的 ANSI 坑同族风险——中转后搬回调用方要的落点，与 pdftext 的 asciiTmpReroute 同一形状）。
+    let browserOut = output;
+    if (!/^[\x21-\x7E]+$/.test(output)) browserOut = path.join(ensureDir(path.join(require('node:os').tmpdir(), 'dockit-frommd-' + stamp() + '-' + process.pid + '-b')), 'out.pdf');
     const tmpDir = ensureDir(path.join(require('node:os').tmpdir(), 'dockit-frommd-' + stamp() + '-' + process.pid));
     const htmlStage = path.join(tmpDir, 'doc.html');
     const h = stepP(['--standalone', ...(css ? ['--css', css] : [])], htmlStage);
     if (!h.ok) { cleanupTmp(tmpDir); return frommdFail(h, t0); }
     const bargs = ['--headless=new', '--disable-gpu', '--disable-extensions', '--no-first-run', '--disable-crash-reporter', '--no-pdf-header-footer',
-      '--user-data-dir=' + path.join(tmpDir, 'profile'), '--print-to-pdf=' + output, require('node:url').pathToFileURL(htmlStage).href];
+      '--user-data-dir=' + path.join(tmpDir, 'profile'), '--print-to-pdf=' + browserOut, require('node:url').pathToFileURL(htmlStage).href];
     const rb = spawnSync(br.exe, bargs, { encoding: 'utf8', timeout: timeoutMs });
     if (rb.signal === 'SIGTERM' || (rb.error && /ETIMEDOUT/i.test(String(rb.error)))) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'timeout', error: `浏览器印 PDF 超预算（预算 ${timeoutMs}ms）`, next: nextFor('timeout', {}) }, t0); }
     if (rb.error) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'failed', error: `浏览器进程失败：${String(rb.error).slice(0, 160)}`, next: '看 error 原文；ENOENT＝DOCKIT_BROWSER 指错' }, t0); }
-    if (rb.status !== 0 || !fs.existsSync(output)) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'failed', error: `浏览器没产出 PDF（退码 ${rb.status}，产物在否=${fs.existsSync(output)}）：${String(rb.stderr || '').replace(/\s+/g, ' ').slice(0, 200)}`, next: '换 --to html 拿中间件自己印；或设 DOCKIT_BROWSER 指另一个浏览器 exe' }, t0); }
+    if (rb.status !== 0 || !fs.existsSync(browserOut)) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'failed', error: `浏览器没产出 PDF（退码 ${rb.status}，产物在否=${fs.existsSync(browserOut)}）：${String(rb.stderr || '').replace(/\s+/g, ' ').slice(0, 200)}`, next: '换 --to html 拿中间件自己印；或设 DOCKIT_BROWSER 指另一个浏览器 exe' }, t0); }
+    if (browserOut !== output) { try { fs.copyFileSync(browserOut, output); try { fs.rmSync(path.dirname(browserOut), { recursive: true, force: true }); } catch { } } catch (e) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'failed', error: `ASCII 中转失败（浏览器已印出、装置搬回时错）：${String(e.message).slice(0, 120)}`, next: '把本行 JSON 原样回报；中间件在系统 Temp 的 dockit-frommd-*-b 目录' }, t0); } }
     const pp = popplerTool('pdftotext');
     if (!pp.present) { cleanupTmp(tmpDir); return frommdFail({ ok: false, code: 'unavailable', error: '产物回读要 pdftotext，但它不在位：PDF 已生成却**没验证过正文**', next: popplerNext('pdftotext') + '；没验证的产物不许当已核验交付' }, t0); }
     const txt = path.join(tmpDir, 'back.txt');
@@ -4397,8 +4424,34 @@ function parseBboxXml(xmlText) {
   }
   return pages;
 }
-function locateNeedle(pages, needle) {
-  const hits = [];
+/** v3.1.0（本会话实测撞出的 v2.7.0 老缺陷）：/BT[\s\S]*?ET/g 非贪婪在字符串字面量 'TARGET' 的 'ET' 处截断——
+ *  内容流含 TARGET/SET/GET 这类字面量的文本会让删块边界完全失配（轻则删不动、重则删错块）。
+ *  修法＝括号感知切分：跟踪字符串字面量 (…) 开合与 \ 转义，只在字面量外认 BT/ET 算子（ET 后必须是空白/行尾）。
+ *  返回 [start, end] 区间（不是切片）——调用方按区间替换，块间字符（换行/空白）原样保留（map+join 会把它们全丢，v3.1.0 实测）。 */
+function findTextBlocks(s) {
+  const spans = [];
+  let i = 0;
+  while (i < s.length) {
+    if (s.startsWith('BT', i) && (i + 2 >= s.length || /\s/.test(s[i + 2]))) {
+      let j = i + 2, depth = 0, out = null;
+      while (j < s.length) {
+        const c = s[j];
+        if (c === '\\') { j += 2; continue; }
+        if (c === '(') depth += 1;
+        else if (c === ')') depth = Math.max(0, depth - 1);
+        else if (depth === 0 && c === 'E' && s.startsWith('ET', j) && (j + 2 >= s.length || /\s/.test(s[j + 2]))) { out = j; break; }
+        j += 1;
+      }
+      if (out === null) break;
+      spans.push([i, out + 2]);
+      i = out + 2;
+      continue;
+    }
+    i += 1;
+  }
+  return spans;
+}
+function locateNeedle(pages, needle) {  const hits = [];
   const nz = String(needle).replace(/\s+/g, '');
   if (!nz) return hits;
   pages.forEach((pg, pi) => {
@@ -4419,7 +4472,11 @@ function cmdRedact(args) {
   const t0 = Date.now();
   const { positional, flags } = parseArgs(args, 'redact');
   inputSizeGuard(positional[0], flags['max-input-bytes'], 'redact'); // F6：本地解包路线的输入体积闸（默认 256 MB；--max-input-bytes／DOCKIT_MAX_INPUT_BYTES 可抬，属放宽规则）
-  if (!positional[0]) die('invalid-document', '缺输入文件', '用法：redact <输入.pdf> [--needle 串] [--needles 数据.json] [--out 文件]（help redact 看全）');
+  if (!positional[0]) die('invalid-document', '缺输入文件', '用法：redact <输入.pdf> [--needle 串] [--needles 数据.json] [--fill black|none] [--out 文件]（help redact 看全）');
+  // v3.1.0：--fill black（默认）＝脱敏（画框）；none＝删字留白（不画框）。复用同一套 locate+delete+verify。
+  const fill = flags.fill !== undefined && flags.fill !== null ? String(flags.fill).toLowerCase() : 'black';
+  if (fill !== 'black' && fill !== 'none') die('invalid-output', `--fill 只认 black|none，给了 ${JSON.stringify(String(flags.fill))}`, 'black＝画黑框（脱敏，默认）；none＝删字留白（把多余条目去掉，黑框反而是错的）');
+  const dryRun = flags['dry-run'] === true; // v3.2.0 试运行：只定位＋旋转检查，不删不画不写盘（M266 守这条分支）
   const input = abs(positional[0]);
   if (!fs.existsSync(input)) die('invalid-document', `输入不存在：${positional[0]}`, '给绝对路径');
   const buf = fs.readFileSync(input);
@@ -4443,13 +4500,19 @@ function cmdRedact(args) {
   const output = flags.out !== undefined ? abs(String(flags.out)) : freePath(OUT_DIR, `${path.basename(input, '.pdf')}-redacted`, 'pdf');
   if (flags.out !== undefined && fs.existsSync(output)) die('invalid-output', `输出已存在，绝不覆盖：${output}`, '换个输出路径，或省略让装置落 _out 自动去重');
   if (output === input) die('invalid-output', '输入与输出是同一个文件（PDF 永不做就地改写）', '产物必须是新路径');
-  ensureDir(path.dirname(output));
+  if (!dryRun) ensureDir(path.dirname(output)); // v3.2.0：试运行连父目录都不建（零写入）
   const { PDFDocument, PDFName, PDFRawStream, PDFDict } = pl.lib;
   (async () => {
     let doc = null;
     try { doc = await PDFDocument.load(buf, { updateMetadata: false, ignoreEncryption: true }); }
     catch (e) { const msg = String((e && e.message) || e); die(/encrypt/i.test(msg) ? 'unsupported-format' : 'invalid-document', /encrypt/i.test(msg) ? '加密 PDF 不在支持面：' + input : `读不通这份 PDF：${msg.slice(0, 160)}`, /encrypt/i.test(msg) ? '先解密再涂黑；装置不绕加密' : '先 inspect 看容器识别'); }
     if (doc.isEncrypted) die('unsupported-format', `加密 PDF 不在支持面：${input}`, '先解密再涂黑；装置不绕加密');
+    // 🔴 v3.1.0 实测（本会话 /Rotate 90 夹具复现）：/Rotate≠0 的页上 bbox 词框坐标与内容流坐标差一个随旋转
+    // 变化的常数（本例 ~588，不是 842−y），pdfRects 映射全错——轻则 needle 命中不了、报 failed 指向错方向，
+    // 重则框落到别处、删了别的 BT/ET 组、验收还可能通过。装置不猜旋转矩阵 ⇒ 前置拒，指路 pageops rotate 转正。
+    const rotatedPages = [];
+    doc.getPages().forEach((p, i) => { if ((p.getRotation().angle % 360) !== 0) rotatedPages.push(i + 1); });
+    if (rotatedPages.length && !dryRun) die('unsupported-format', `这些页带 /Rotate ≠ 0（第 ${rotatedPages.join('、')} 页）：bbox 词框坐标与内容流坐标的映射随旋转变化，装置不猜旋转矩阵——v3.1.0 实测在本类件上会删错字或删不动（验收还可能通过）`, `先 pageops rotate 转正（rotate 0 不在支持面：用 rotate 90/180/270 里的对应角转回 0 视角）再来涂黑；或手工转正后重跑`);
     const rdTmp = asciiTmpDir('rd');
     const bboxTxt = path.join(rdTmp, 'bbox.xml');
     const rb = spawnSync(pp.exe, ['-bbox', input, bboxTxt], { encoding: 'utf8', timeout: DEFAULT_TIMEOUT_MS });
@@ -4463,11 +4526,34 @@ function cmdRedact(args) {
       jobs.push({ needle: n, hits: hits.length, pages: [...new Set(hits.map((h) => h.page))], rects: hits.map((h) => ({ page: h.page, x0: h.box.xMin, x1: h.box.xMax, yTop: h.box.yMin, yBottom: h.box.yMax, pageHeight: h.pageHeight })) });
     }
     const notFound = jobs.filter((j) => j.hits === 0).map((j) => j.needle);
-    if (notFound.length) die('invalid-output', `这些 needle 在文本层里一个都没找到：${notFound.map((x) => JSON.stringify(x).slice(0, 30)).join(' , ')}`, '找不到就**不能宣称涂黑过**：先确认字形（全角／简繁／连字／跨行断词）与是否本就没有这段文字；本命令不做模糊匹配');
+    if (notFound.length && !dryRun) die('invalid-output', `这些 needle 在文本层里一个都没找到：${notFound.map((x) => JSON.stringify(x).slice(0, 30)).join(' , ')}`, '找不到就**不能宣称涂黑过**：先确认字形（全角／简繁／连字／跨行断词）与是否本就没有这段文字；本命令不做模糊匹配');
+    // v3.2.0 --dry-run 试运行：只定位＋旋转检查，不删不画不写盘（rdTmp 中转目录在这里收掉，无产物落盘；M266 守这条分支）。
+    if (dryRun) {
+      try { fs.rmSync(rdTmp, { recursive: true, force: true }); } catch { }
+      const touchPages = [...new Set(jobs.flatMap((j) => j.pages))].sort((a, b) => a - b);
+      const wouldFail = [];
+      if (notFound.length) wouldFail.push(`这些 needle 在文本层里一个都没找到：${notFound.map((x) => JSON.stringify(x).slice(0, 30)).join(' , ')}（正常跑会 invalid-output 拒收）`);
+      if (rotatedPages.length) wouldFail.push(`这些页带 /Rotate ≠ 0（第 ${rotatedPages.join('、')} 页）：正常跑会 unsupported-format 前置拒，先 pageops rotate 转正再来`);
+      out({
+        ok: true, op: 'redact', dryRun: true, fill,
+        input: { path: input, bytes: buf.length, sha256: inSha, unchanged: true },
+        wouldWriteTo: output,
+        needles: jobs.map((j) => ({ needleChars: j.needle.length, located: j.hits, pages: j.pages, rects: j.rects.length })),
+        wouldTouchPages: touchPages,
+        rotationRefusedPages: rotatedPages,
+        notFoundNeedles: notFound,
+        wouldSucceed: wouldFail.length === 0,
+        wouldFailReasons: wouldFail.length ? wouldFail : undefined,
+        warnings: ['🔴 只删**页内容流**里的 BT/ET 文本组：画在 Form XObject、注释外观（AP）、文档附件或另一份 XMP 里的同一串不会被删——正常跑的验收那一步会把它抓出来并判 failed，但**别把"这串没了"推广成"这类信息都清了"**（元数据另走 scrub）'],
+        note: '试运行（--dry-run）：只跑定位＋旋转检查，不删内容流、不画框、不落产物（会落哪见 wouldWriteTo）。拒收只在预览里点名（wouldSucceed=false＋wouldFailReasons），正常跑才生效。',
+      });
+      return;
+    }
     const byPage = new Map();
     for (const j of jobs) for (const r of j.rects) { if (!byPage.has(r.page)) byPage.set(r.page, []); byPage.get(r.page).push(r); }
     const warnings = [];
     let opsRemoved = 0; const inlineStreams = [];
+    const crossOps = [];   // v3.1.0：删掉的整段块里"框外还有文字算子"的记录（删除粒度粗于框时的删多预警）
     for (const [pageNum, rects] of byPage) {
       const page = doc.getPage(pageNum - 1);
       const ph = page.getSize().height;
@@ -4482,20 +4568,26 @@ function cmdRedact(args) {
         const isFlate = String(o.dict.get(PDFName.of('Filter')) || '').includes('FlateDecode');
         if (isFlate) { try { bytes = zlib.inflateSync(bytes); } catch { warnings.push(`第 ${pageNum} 页内容流解不开（FlateDecode 坏流）：这一页没改写`); continue; } }
         let s = bytes.toString('latin1');
-        s = s.replace(/BT[\s\S]*?ET/g, (blk) => {
+        // v3.1.0：按区间替换（不 map+join——块间换行会全丢）；每删一块统计框外算子（删多预警）
+        for (const [bs, be] of findTextBlocks(s).reverse()) {
+          const blk = s.slice(bs, be);
           const pts = [...blk.matchAll(/(-?[\d.]+) (-?[\d.]+)\s+(Td|Tm)/g)].map((m) => ({ x: +m[1], y: +m[2] }));
           const inside = pts.length > 0 && pts.some((p) => pdfRects.some((r) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1));
-          if (!inside) return blk;
+          if (!inside) continue;
           opsRemoved++;
-          return '';
-        });
+          // 🔴 v3.1.0（审查报告"验收只防删漏、不防删多"）：粒度是整段 BT…ET——块里若有 Td/Tm 落在框内就整块删，
+          // 一段块跨多格时会静默多删。统计"块内框外"的文字算子：有就 warning 点名（不拒收——先删下来说清楚）。
+          const outsidePts = pts.filter((p) => !pdfRects.some((r) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1));
+          if (outsidePts.length) crossOps.push({ page: pageNum, outsidePts: outsidePts.length });
+          s = s.slice(0, bs) + s.slice(be);
+        }
         const payload = zlib.deflateSync(Buffer.from(s, 'latin1'), { level: 9 });
         o.dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'));
         o.dict.set(PDFName.of('Length'), pl.lib.PDFNumber.of(payload.length));
         doc.context.assign(it, PDFRawStream.of(o.dict, new Uint8Array(payload)));
       }
-      // 黑框交给 pdf-lib 自己的写入器（追加到该页内容流末尾＝盖在剩余文字之上）
-      for (const r of pdfRects) page.drawRectangle({ x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0 /* 不传 color：pdf-lib 的 drawRectangle 默认就是黑色（lib 里没有导出的 PDFColor 名字，实测踩过） */ });
+      // 黑框交给 pdf-lib 自己的写入器（追加到该页内容流末尾＝盖在剩余文字之上）；--fill none 时跳过画框＝删字留白
+      if (fill === 'black') for (const r of pdfRects) page.drawRectangle({ x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0 /* 不传 color：pdf-lib 的 drawRectangle 默认就是黑色（lib 里没有导出的 PDFColor 名字，实测踩过） */ });
     }
     const bytesOut = Buffer.from(await doc.save({ updateMetadata: false }));
     fs.writeFileSync(output, bytesOut);
@@ -4513,16 +4605,23 @@ function cmdRedact(args) {
     if (rc.status !== 0) { out({ ok: false, code: 'failed', error: `产物验收跑不了（pdftotext 退码 ${rc.status}）：没法证明涂黑成功`, next: '别用这份产物外发——**未经验证的脱敏等于没脱敏**', jobs, output: { path: output } }); process.exit(1); }
     if (residual.length) { out({ ok: false, code: 'failed', error: `🔴 产物文本层里**仍能找到** ${residual.length} 个 needle：${residual.map((x) => JSON.stringify(x).slice(0, 30)).join(' , ')}`, next: '这就是假涂黑（黑框盖住但文字还在）。别外发这份产物；常见原因是文字画在 Form XObject 或注释外观里——本面只删页内容流的 BT/ET 组，做不到的部分必须由装置说破', verify: { needles: needles.length, residual: residual.length, residualNeedles: residual }, input: { path: input, sha256: inSha }, output: { path: output, bytes: bytesOut.length } }); process.exit(1); }
     const afterPages = (await PDFDocument.load(bytesOut, { updateMetadata: false })).getPageCount();
+    const crossWarn = crossOps.length ? `🔴 有 ${crossOps.length} 个被删的整段块里**框外还有文字算子**（${crossOps.slice(0, 6).map((c) => `第 ${c.page} 页 ${c.outsidePts} 个`).join('；')}）：删除粒度是整段 BT…ET，块内任意一个 Td/Tm 落在框内就整块删——同段块跨多格/多行时**相邻文字会被顺手删掉**。核对产物：确认多删的那些正是要去的条目，否则换更细粒度的定位（每行一个 needle）` : null;
+    const baseWarnings = [
+      '🔴 只删了**页内容流**里的 BT/ET 文本组：画在 Form XObject、注释外观（AP）、文档附件或另一份 XMP 里的同一串不会被删——验收那一步会把它抓出来并判 failed，但**别把"这串没了"推广成"这类信息都清了"**（元数据另走 scrub）',
+      fill === 'black' ? '黑框是画上去的遮盖，真删的是文本算子；验收＝产物文本层零命中，不是"看着黑了"' : '--fill none＝只删不画（删字留白）：真删的是文本算子，验收＝产物文本层零命中；脱敏用途别用 none（黑框是脱敏的看得见的形状）',
+    ];
+    if (crossWarn) baseWarnings.push(crossWarn);
     out({
       ok: true, op: 'redact', backend: 'pdf-lib+poppler', input: { path: input, bytes: buf.length, sha256: inSha, unchanged: true },
       output: { path: output, bytes: bytesOut.length, sha256: sha256(bytesOut) },
-      pages: doc.getPageCount(), pagesAfter: afterPages,
+      pages: doc.getPageCount(), pagesAfter: afterPages, fill,
       needles: jobs.map((j) => ({ needleChars: j.needle.length, located: j.hits, pages: j.pages })),
       textOpsRemoved: opsRemoved,
-      verify: { method: '产物再用 pdftotext 抽文本层，needle 必须零命中', residual: 0, pagesEqual: afterPages === doc.getPageCount() },
+      blocksWithOutsideText: crossOps.length || 0,
+      verify: { method: '产物再用 pdftotext 抽文本层，needle 必须零命中', residual: 0, pagesEqual: afterPages === doc.getPageCount(), fill },
       ms: Date.now() - t0,
-      warnings: ['🔴 只删了**页内容流**里的 BT/ET 文本组：画在 Form XObject、注释外观（AP）、文档附件或另一份 XMP 里的同一串不会被删——验收那一步会把它抓出来并判 failed，但**别把"这串没了"推广成"这类信息都清了"**（元数据另走 scrub）', '黑框是画上去的遮盖，真删的是文本算子；验收＝产物文本层零命中，不是"看着黑了"'],
-      note: '真涂黑＝删算子＋画遮盖＋**回读证明查不到**。找不到 needle 直接拒（不宣称涂过）；扫描件无文本层拒（不做模糊匹配）；加密件拒',
+      warnings: baseWarnings,
+      note: fill === 'black' ? '真涂黑＝删算子＋画遮盖＋**回读证明查不到**。找不到 needle 直接拒（不宣称涂过）；扫描件无文本层拒（不做模糊匹配）；加密件拒' : '删字留白（--fill none）＝删算子＋**回读证明查不到**，不画任何框。找不到 needle 直接拒；扫描件无文本层拒；加密件拒；同段块跨格时的删多预警走 warnings（blocksWithOutsideText>0 时先核对产物）',
     });
   })().catch((e) => { const p = asyncFailPayload(e); die(p.code, p.error, p.next); });
 }
@@ -5632,6 +5731,7 @@ async function cmdSelftest(args) {
   // ---- R1-a（任务书 P1-4）：机器可读的命令面。三层各有各的独立攻击（规范 §4.4 第 ⑦ 条：多层防线不许搭便车）：
   //      默认值对账＝M42，default 写成引用常量＝M49，宣告与实装的覆盖面＝M50/M51，出口形状与原型链漏判走下一条判据（M52/M53）。
   t('help 结构化命令面：spec 三面同名、默认值等于配置区常量、宣告的开关被该命令真读、失败码都有处置文案', () => {
+    // 过去的补丁脚本曾破坏反斜杠转义；本条覆盖控制字符和公开入口示例。
     const src = str(fs.readFileSync(__filename));
     const bodyOf = cmdBody;
     const bad = [];
@@ -5816,12 +5916,11 @@ async function cmdSelftest(args) {
     return bad.length ? bad.slice(0, 6).join(' | ') : true;
   });
   t('doc 卫生：文档里的在册绝对路径必须存在、不得含控制字符、SKILL 写的判据数要等于实际条数', () => {
-    // 起因（2026-10-04，由接手会话自查抓出、我此前所有判据全绿放过）：调用卡里 `D:\fonts-backup-…` 曾被补丁脚本
-    // 写成 `D:` + 0x0C + `onts-…`（`\f` 被当 JS 转义吞掉）——肉眼看不出、grep 搜不到，而 SKILL 里还有个乱码字。
+    // 这条判据锁住公开文档的控制字符与路径入口示例，避免转义损坏或入口断链。
     // 这类缺陷只在"文档也是产物"这一层才看得见，所以把它变成判据，而不是写进注意事项。
     const src = str(fs.readFileSync(__filename));
     const actual = [...src.matchAll(/^[ \t]*(?:await[ \t]+)?(?:ta|t)\(\s*'([^']+)'/gm)].length;   // 判据条数按定义点数自算，不靠人记
-    const skillPath = path.join(process.env.USERPROFILE || process.env.HOME || '', '.qoder-cn/skills/agent-doc-ops/SKILL.md');
+    const skillPath = path.join(ROOT, 'skills', 'agent-doc-ops', 'SKILL.md');
     // 公开树版（2026-10-15 机主裁决开源化）：内账文档（总览/日志/调用卡/分工表）不入公开面，
     // 存在性改为"有就核、没有不算缺陷"——对账逻辑保持一致，清单随公开面收敛。
     const files = [['README', ROOT + '/README.md'], ['总览', ROOT + '/项目总览.md'], ['日志', ROOT + '/迭代日志.md'], ['调用卡', ROOT + '/给其它agent-调用卡.md'], ['分工表', ROOT + '/技能与装置分工表.md'], ['SKILL', skillPath], ['ADR-001', ROOT + '/docs/adr/ADR-001-tesseract-ocr-外部依赖.md']]
@@ -5830,13 +5929,14 @@ async function cmdSelftest(args) {
     // 历史记录里"某个路径已被我删掉"是正当写法，不许被这条判红——迭代日志/总览第 9 条就是这么写的。
     // 再加"上层目录必须存在"这一层，换机器（没有 D: 盘）时整族自动跳过，不制造不可携带的红。
     // 上一版按完整名字白名单判，结果 M18（目录名末位写错一号）压根没进断言 ⇒ 改成按**族**匹配，名字写错照样在族内。
-    const live = /^(D:[\\/]fonts-backup-LO-[0-9]{8}|D:[\\/](?:工作环境[\\/])?Agent文档操作|C:[\\/](?:WINDOWS|Windows)[\\/]Fonts)/i;
+    const live = /^C:[\\/](?:WINDOWS|Windows)[\\/]Fonts/i;
     const bad = []; let pathChecked = 0;
     // 台子例数也从源码自算（v1.2.0）：与 test/mutant.js 的 JC 同一把尺，README 里那个数不许靠人记
     const muts = [...str(fs.readFileSync(ROOT + '/test/mutant.js')).matchAll(/\{ id: '(M\d+)'/g)].length;
     for (const [label, p] of files) {
       if (!fs.existsSync(p)) { if (label === 'SKILL') continue; bad.push(`${label} 文件不在`); continue; }
       const t0 = str(fs.readFileSync(p));
+      if (label === 'README' && !t0.includes('node <REPO>\\dockit.js <命令> [参数...]')) bad.push('README 缺少仓库路径占位调用示例');
       const ctrl = [...new Set([...t0].filter((ch) => /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/.test(ch)).map((ch) => 'U+' + ch.codePointAt(0).toString(16)))];
       if (ctrl.length) bad.push(`${label} 含控制字符/替换符 ${ctrl.join(',')}（反斜杠转义被脚本吞掉的形状）`);
       for (const m of t0.matchAll(/`([A-Za-z]:[\\/][^`|]*)`/g)) {
@@ -6792,10 +6892,13 @@ async function cmdSelftest(args) {
     {
       const zip = zipRead(fs.readFileSync(odtSeed));
       const meta0 = str(zip.get('meta.xml') || '');
-      const seeded = meta0.replace(/<office:meta>/, '<office:meta><meta:initial-creator>SEED_USER_1</meta:initial-creator><dc:title>SEED_TITLE_1</dc:title>');
+      const seedValues = ['SEED_INITIAL_CREATOR', 'SEED_CREATOR', 'SEED_TITLE', 'SEED_SUBJECT', 'SEED_DESCRIPTION', 'SEED_GENERATOR', 'PT10S', '2026-01-01T00:00:00Z', 'SEED_KEYWORD'];
+      const seedFields = EXPECT.map((f, i) => `<${f}>${seedValues[i]}</${f}>`).join('');
+      const seeded = meta0.replace(/<office:meta>/, '<office:meta>' + seedFields);
       const methods = new Map(zipList(fs.readFileSync(odtSeed)).map((r) => [r.name, r.method]));
       const parts = [];
       for (const [name, data] of zip) parts.push({ name, data: name === 'meta.xml' ? Buffer.from(seeded, 'utf8') : data, method: methods.get(name) ?? 8 });
+      if (!zip.has('Thumbnails/thumbnail.png')) parts.push({ name: 'Thumbnails/thumbnail.png', data: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'), method: 8 });
       fs.writeFileSync(odtSeed, zipWrite(parts));
     }
     const out1 = `${S}/r3a-scrub.odt`;
@@ -6811,10 +6914,9 @@ async function cmdSelftest(args) {
     const left = EXPECT.filter((f) => new RegExp('<' + f + '(?:\\s[^>]*)?>[^<]', '').test(meta));
     if (left.length) bad.push('meta.xml 里仍留有值的目标字段：' + left.join(','));
     // ② 缩略图条目必须不存在，且删了什么要自报
-    //    公开树版（v3.0.1 开源化轮）：种子件来自清洗后夹具（本就无 Thumbnails 条目）⇒ removedEntries 为空是正确行为；
-    //    "必须删缩略图"的牙由 scrub 的容器分流判据（ODF 面九字段+缩略图）与缩略图哨兵独立覆盖——这里只核"产物里没有"。
+    //    种子件显式加入一张 PNG，确保删除行为与 removedEntries 自报都能实测。
     if (om.has('Thumbnails/thumbnail.png')) bad.push('产物里还有 Thumbnails/thumbnail.png（缩略图＝第一页的渲染图，属版面内容出域）');
-    if (Array.isArray(j.removedEntries) && j.removedEntries.length && !j.removedEntries.includes('Thumbnails/thumbnail.png')) bad.push('删掉的条目没自报进 removedEntries：' + JSON.stringify(j.removedEntries));
+    if (!Array.isArray(j.removedEntries) || !j.removedEntries.includes('Thumbnails/thumbnail.png')) bad.push('删掉的缩略图没自报进 removedEntries：' + JSON.stringify(j.removedEntries));
     // ③ 规范形状
     if (!j.shape || j.shape.firstEntry !== 'mimetype' || j.shape.firstMethod !== 'stored') bad.push('产物的 mimetype 形状不是"首位+stored"：' + JSON.stringify(j.shape));
     // ④ 探针条数 = 独立再数一遍的源里非空目标字段数（两条路必须对上，防自证过度）
@@ -6822,11 +6924,11 @@ async function cmdSelftest(args) {
     //    scrub 在零元数据件上应报"没有可清"或空探针——判据按清洗后夹具的现实重锚：
     //    探针条数仍必须等于独立数（对账逻辑不变），但"必须非 0"的反向闸改为正向闸：
     //    夹具若被人塞回元数据，由 scrub 的 removedFields 自报出来，不靠这条拦。
-    // ④ 探针条数 = 种子件里非空目标字段数（注入了 2 个 ⇒ 独立数一遍应为 2，与 scrub 自报的 probeFields 对账）
+    // ④ 探针条数 = 种子件里非空目标字段数（九字段都注入，与 scrub 自报的 probeFields 对账）
     const srcMap = zipRead(fs.readFileSync(odtSeed));
     const srcMeta = str(srcMap.get('meta.xml'));
     const indepNonBlank = EXPECT.filter((f) => new RegExp('<' + f + '(?:\\s[^>]*)?>([^<]*[^<\\s])</' + f + '>').test(srcMeta)).length;
-    if (indepNonBlank < 2) bad.push(`种子件注入失败：独立数到的非空目标字段只有 ${indepNonBlank}（应为 ≥2——种子件没有 SEED 字段，回环测的是空对象）`);
+    if (indepNonBlank !== EXPECT.length) bad.push(`种子件注入失败：独立数到的非空目标字段为 ${indepNonBlank}（应为 ${EXPECT.length}）`);
     if (!Array.isArray(j.probeFields) || j.probeFields.length !== indepNonBlank) bad.push(`探针条数=${(j.probeFields || []).length}，独立数一遍是 ${indepNonBlank}（对不上就是有一边漏了）`);
     // ⑤ 产物可被引擎打开；**四件套**与未清原件一致（不许拿 sha256 当"没变化"，见第四节第 14 条）
     const quad = (file) => {
@@ -6870,7 +6972,7 @@ async function cmdSelftest(args) {
     let j = null; try { j = JSON.parse(r.stdout); } catch { return 'doctor 输出不是 JSON：' + String(r.stdout || r.stderr || '(空)').replace(/\s+/g, ' ').slice(0, 140); }
     // v1.7.0 加的一段：语言包哨兵的**形状**（本判据本来就带 needs:'kit'——doctor 在没有 node_modules 的树上
     // 会整只崩在引擎扫描那行，红因是 ENOENT 而不是 FAIL 明细）。断的是字段之间的关系，不是"本机装了包"：
-    // 把 DOCKIT_TESSDATA 指到一个空目录，`ocr-lang-pack` 必须出现、必须是 WARN、detail 必须自报解析到的目录，
+    // 把 DOCKIT_TESSDATA 指到一个空目录，`ocr-lang-pack` 必须出现且为 WARN，
     // 且 doctor 的 ok 不许因为它变 false——装没装中文包是机器事实，做成红就打穿「外人克隆首跑全绿」。
     const emptyDir = path.join(TMP_DIR, 'no-lang-' + stamp());
     fs.mkdirSync(emptyDir, { recursive: true });
@@ -6882,7 +6984,7 @@ async function cmdSelftest(args) {
       const hit = (jd.checks || []).filter((c) => c.includes(' ocr-lang-pack :: '));
       if (hit.length !== 1) langBad.push('doctor 里 ocr-lang-pack 应当恰好一条，实为 ' + hit.length + ' 条');
       else if (!hit[0].startsWith('WARN ')) langBad.push('缺包态必须是 WARN（不许 FAIL、不许静默），实为：' + hit[0].slice(0, 90));
-      else if (!hit[0].includes(path.basename(emptyDir))) langBad.push('WARN 行没自报本次解析到的 tessdata 目录：' + hit[0].slice(0, 140));
+      else if (hit[0].includes(emptyDir) || hit[0].includes(path.basename(emptyDir))) langBad.push('WARN 行回显了本机 tessdata 路径或目录名：' + hit[0].slice(0, 140));
       if (jd.ok !== true) langBad.push('语言包缺失把 doctor 整轮判红了（WARN 不使整轮红这条口径被打穿）：failed=' + jd.failed);
     }
     fs.rmSync(emptyDir, { recursive: true, force: true });
@@ -6919,10 +7021,10 @@ async function cmdSelftest(args) {
     return bad.length ? bad.slice(0, 4).join(' | ') : true;
   });
 
-  // v1.7.2：替身字体哨兵的覆盖面与降级面。缺陷事实：旧实现只核 7 个固定文件名，而 2026-10-09 系统字体目录
+  // v1.7.2：替身字体哨兵的覆盖面与降级面。缺陷事实：旧实现只核 7 个固定文件名，而系统字体目录
   // 被直删了 6 个替身件，它只报出 1 个——覆盖面不足；同时清单是**机器特定**数据，不能对别的机器判红。
   // 所以三条各配一手：① 现态结论必须等于"独立实算"（装置说在位就真要在位，缺几个就报几个）；
-  // ② 清单不在位 ⇒ WARN 且点名路径（不许崩、不许冒充 PASS）；③ 清单标定在别的机器 ⇒ WARN（绝不允许 FAIL，
+  // ② 清单不在位 ⇒ WARN 且不回显路径（不许崩、不许冒充 PASS）；③ 清单标定在别的机器 ⇒ WARN（绝不允许 FAIL，
   // 否则就打穿"外人克隆首跑全绿"）。②③都靠 `DOCKIT_FONT_MANIFEST` 覆盖口造态，不动仓内清单一个字节。
   t('substitute-fonts 哨兵按登记清单核全量：现态必须等于独立实算，清单缺失与非标定机器都只 WARN', () => {
     const DOC = (env) => { const p = spawnSync(process.execPath, [__filename, 'doctor'], { encoding: 'utf8', cwd: ROOT, timeout: 180000, env: env ? Object.assign({}, process.env, env) : process.env }); let j = null; try { j = JSON.parse(p.stdout); } catch {} return { p, j }; };
@@ -6945,6 +7047,18 @@ async function cmdSelftest(args) {
       if (placeholder) {
         if (!/^WARN /.test(row0)) bad.push(`清单标定机器是占位符（${man['标定机器']}）、本机永远对不上 ⇒ 应降 WARN，实报：${row0.slice(0, 140)}`);
         // WARN 分支不带"已核 N"字样（那是 PASS 分支的自报形状）；全量核验由 ②③ 独立造态覆盖。
+      const calibratedName = 'MUTANT-CALIBRATION';
+      const calibratedPath = path.join(S, 'font-manifest-calibrated.json');
+      fs.writeFileSync(calibratedPath, JSON.stringify(Object.assign({}, man, { 标定机器: calibratedName })), 'utf8');
+      const dc = DOC({ DOCKIT_FONT_MANIFEST: calibratedPath, COMPUTERNAME: calibratedName });
+      const rowc = lineOf(dc.j);
+      if (!dc.j) bad.push('合成标定机器态的 doctor 没出 JSON：' + String(dc.p.stdout || dc.p.stderr || '(空)').slice(0, 120));
+      else {
+        const expected = missReal.length ? /^FAIL / : /^PASS /;
+        if (!expected.test(rowc)) bad.push(`合成标定机器态应为 ${missReal.length ? 'FAIL' : 'PASS'}，实为：${rowc.slice(0, 140)}`);
+        if (!rowc.includes('已核 ' + man.files.length)) bad.push(`合成标定机器态的已核数不等于清单件数 ${man.files.length}：${rowc.slice(0, 180)}`);
+        if (missReal.length && !rowc.includes('缺 ' + missReal.length + '/' + man.files.length)) bad.push(`合成标定机器态缺件数不等于独立实算 ${missReal.length}/${man.files.length}：${rowc.slice(0, 180)}`);
+      }
       } else {
         if (!/^PASS /.test(row0)) bad.push(`清单说全在位、装置却报非 PASS：${row0.slice(0, 140)}`);
         if (!row0.includes('已核 ' + man.files.length)) bad.push(`覆盖面自报的"已核条目数"不等于清单件数 ${man.files.length}（只核少数几个就是 2026-10-09 那次"丢 6 报 1"的形状）：${row0.slice(0, 200)}`);
@@ -6954,12 +7068,12 @@ async function cmdSelftest(args) {
       if (!row0.includes('缺 ' + missReal.length + '/' + man.files.length)) bad.push(`FAIL 行没按实算报缺件数（应含"缺 ${missReal.length}/${man.files.length}"）：${row0.slice(0, 200)}`);
       if (!row0.includes('已核 ' + man.files.length)) bad.push('FAIL 行的"已核条目数"也不许少报：' + row0.slice(0, 200));
     }
-    // ② 清单不在位：必须 WARN、必须点名被解析到的路径，且不许把整轮 doctor 判红成"崩"
+    // ② 清单不在位：必须 WARN、不回显解析路径，且不许把整轮 doctor 判红成"崩"
     const d1 = DOC({ DOCKIT_FONT_MANIFEST: path.join(TMP_DIR, 'no-such-font-manifest.json') });
     const row1 = lineOf(d1.j);
     if (!d1.j) bad.push('清单缺失态的 doctor 没出 JSON：' + String(d1.p.stdout || d1.p.stderr || '(空)').slice(0, 120));
     else if (!/^WARN /.test(row1)) bad.push('清单缺失必须是 WARN（既不 FAIL 也不静默 PASS），实为：' + row1.slice(0, 150));
-    else if (!/no-such-font-manifest\.json/.test(row1)) bad.push('WARN 行没点名解析到的清单路径：' + row1.slice(0, 150));
+    else if (/no-such-font-manifest\.json|[A-Za-z]:[\\/]/.test(row1)) bad.push('WARN 行回显了本机清单路径：' + row1.slice(0, 150));
     // ③ 非标定机器：造一份"标定在别处"的清单副本，必须 WARN，绝不允许 FAIL
     //    公开树版（v3.0.1 开源化轮）：机器名不进命令输出（运行时出口），WARN 行改为报「非本机」
     //    而不带具体主机名——"机器不对"与"清单不对"由「清单标定于非本机」这个短语区分。
@@ -6972,6 +7086,65 @@ async function cmdSelftest(args) {
     else if (!/^WARN /.test(row2)) bad.push('非标定机器必须 WARN，实为：' + row2.slice(0, 140));
     else if (!/非本机/.test(row2)) bad.push('WARN 行没自报「非本机」（看不出是"机器不对"还是"清单不对"）：' + row2.slice(0, 160));
     return bad.length ? bad.slice(0, 4).join(' | ') : true;
+  });
+
+  t('doctor 输出不回显绝对路径', () => {
+    const marker = `doctor-private-path-${stamp()}`;
+    const base = path.join(TMP_DIR, marker);
+    const r = spawnSync(process.execPath, [__filename, 'doctor'], {
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, {
+        DOCKIT_KIT_CLI: path.join(base, 'kit', 'cli.js'),
+        DOCKIT_FONT_MANIFEST: path.join(base, 'font-manifest.json'),
+        DOCKIT_TESSERACT: path.join(base, 'tesseract.exe'),
+        DOCKIT_TESSDATA: path.join(base, 'tessdata'),
+        DOCKIT_OFFICECLI: path.join(base, 'officecli.exe'),
+        DOCKIT_POPPLER_BIN: path.join(base, 'poppler'),
+        DOCKIT_PANDOC: path.join(base, 'pandoc.exe'),
+      }),
+      timeout: 180000,
+    });
+    let j = null; try { j = JSON.parse(r.stdout); } catch {}
+    if (!j || !Array.isArray(j.checks)) return 'doctor 没有返回带 checks 的 JSON：' + String(r.stdout || r.stderr || '(空)').replace(/\s+/g, ' ').slice(0, 160);
+    const text = JSON.stringify(j);
+    const absolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|(?:^|[\s"'(])\/(?:home|Users|tmp|var|opt|etc|usr|mnt|root)\/)/;
+    if (text.includes(marker) || absolutePath.test(text)) return 'doctor 输出包含注入的本机路径或其它绝对路径';
+    return true;
+  });
+
+  t('install-fonts --check 对缺件和哈希错误返回失败，--list 保持探测成功', () => {
+    const base = path.join(S, 'install-fonts-check');
+    const systemRoot = path.join(base, 'system');
+    const fonts = path.join(systemRoot, 'Fonts');
+    fs.mkdirSync(fonts, { recursive: true });
+    const source = Buffer.from('font-check-fixture');
+    const manifestPath = path.join(base, 'font-manifest.json');
+    const manifest = { files: [{ name: 'probe.ttf', bytes: source.length, sha256: crypto.createHash('sha256').update(source).digest('hex') }] };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+    const run = (args) => {
+      const script = path.join(ROOT, 'install-fonts.js');
+      const loader = [
+        `process.env.SystemRoot = ${JSON.stringify(systemRoot)};`,
+        `process.env.DOCKIT_FONT_MANIFEST = ${JSON.stringify(manifestPath)};`,
+        "process.env.DOCKIT_FONT_SOURCE = '';",
+        `process.argv = [process.execPath, ${JSON.stringify(script)}, ...${JSON.stringify(args)}];`,
+        `require(${JSON.stringify(script)});`,
+      ].join('\n');
+      const p = spawnSync(process.execPath, ['-e', loader], {
+        encoding: 'utf8',
+        timeout: 30000,
+      });
+      let j = null; try { j = JSON.parse(p.stdout); } catch {}
+      return { exit: p.status, j, output: p.stdout || p.stderr || '' };
+    };
+    const missing = run(['--check']);
+    const list = run(['--list']);
+    fs.writeFileSync(path.join(fonts, 'probe.ttf'), Buffer.from('different-font-content'));
+    const mismatch = run(['--check']);
+    if (!missing.j || missing.j.ok !== false || missing.exit !== 1 || missing.j.missing !== 1) return `缺件态未失败：${missing.output.slice(0, 220)}`;
+    if (!list.j || list.j.ok !== true || list.exit !== 0 || list.j.missing !== 1) return `--list 探测态行为改变：${list.output.slice(0, 220)}`;
+    if (!mismatch.j || mismatch.j.ok !== false || mismatch.exit !== 1 || mismatch.j.hashMismatch !== 1) return `哈希错误态未失败：${mismatch.output.slice(0, 220)}`;
+    return true;
   });
 
   // ---- 合成正向：缺字族必须自曝。昂贵前置全部惰性（once 记忆），--only 选跑时不起没必要的引擎
@@ -9507,6 +9680,71 @@ const DEP_SKIP_REGISTRY = [
     const badJson = `${S}/rd-bad.json`; fs.writeFileSync(badJson, JSON.stringify({ notNeedles: 1 }));
     const bj = R(['--needles', badJson]);
     if (!bj.j || bj.j.ok !== false) bad.push('needles JSON 形状不对没拒');
+    // ---- v3.1.0 三件：--fill none / 删多预警 / 旋转页前置拒 ----
+    // ① --fill none：删字留白（不画框），keep 行必须逐字保留、needle 必须零命中；black 回归不变
+    const en = R(['--needle', 'SECRET TARGET STRING', '--fill', 'none']);
+    if (!en.j || en.j.ok !== true || en.j.fill !== 'none') bad.push('--fill none 正向没跑通：' + JSON.stringify(en.j && { code: en.j.code, fill: en.j.fill }));
+    else {
+      const enTxt = F2js(['pdftext', en.j.output.path]);
+      const t3 = enTxt && enTxt.ok === true ? str(fs.readFileSync(enTxt.file)) : '';
+      if (/SECRET TARGET STRING/.test(t3)) bad.push('--fill none 后 needle 仍在（删字留白失败）');
+      if (!/PUBLIC LINE ONE/.test(t3) || !/PUBLIC LINE THREE/.test(t3)) bad.push('--fill none 把 keep 行也弄丢了');
+    }
+    const ef = R(['--needle', 'SECRET TARGET STRING', '--fill', 'blue']);
+    if (!ef.j || ef.j.ok !== false || ef.j.code !== 'invalid-output') bad.push('--fill 非法值该拒（black|none 白名单）');
+    // ② 删多预警：一段 BT…ET 块画两行（双 Td，第二行在 needle 框外）⇒ 整段删＝顺手删 KEEPME，blocksWithOutsideText 必须 ≥1 并 warning
+    const fCross = `${S}/rd-cross.pdf`;
+    fs.writeFileSync(fCross, mkPdfBytes([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+      mkPdfStream('<< /Length 0 >>', Buffer.from('BT /F1 12 Tf 20 150 Td (SECRET TARGET STRING) Tj 0 -30 Td (KEEPME NEIGHBOUR) Tj ET\nBT /F1 12 Tf 20 90 Td (PUBLIC LINE THREE) Tj ET', 'latin1')),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ], ''));
+    // 🔴 删多例必须独立 spawn（R 闭包的文件名固定在 rd-in.pdf，复用它会把两例写进同一文件）
+    const RC = (extra) => { const p = spawnSync(process.execPath, [__filename, 'redact', fCross, ...(extra || [])], { encoding: 'utf8' }); let j = null; try { j = JSON.parse(String(p.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { } return { p, j }; };
+    const ec = RC(['--needle', 'SECRET TARGET STRING']);
+    if (!ec.j || ec.j.ok !== true) bad.push('删多场景正向没跑通：' + JSON.stringify(ec.j && { code: ec.j.code }));
+    else if (!(ec.j.blocksWithOutsideText >= 1)) bad.push('同段块跨行时删多预警没响（blocksWithOutsideText 应 ≥1，删多静默＝验收只防删漏不防删多的老形状）');
+    // ③ 旋转页前置拒：/Rotate 90 的件（无论 needle 找不找得到）都 unsupported-format，不许按错误映射动手
+    const fRot = `${S}/rd-rot.pdf`;
+    fs.writeFileSync(fRot, mkPdfBytes([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Rotate 90 /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+      mkPdfStream('<< /Length 0 >>', Buffer.from('BT /F1 12 Tf 50 650 Td (KEEPME LINE A) Tj ET', 'latin1')),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ], ''));
+    // 🔴 旋转例必须独立 spawn（R 闭包的文件名固定在 rd-in.pdf，复用它会把两例写进同一文件）
+    const RR = (extra) => { const p = spawnSync(process.execPath, [__filename, 'redact', fRot, ...(extra || [])], { encoding: 'utf8' }); let j = null; try { j = JSON.parse(String(p.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { } return { p, j }; };
+    const er = RR(['--needle', 'NEVER THERE ZZ']);
+    if (!er.j || er.j.ok !== false || er.j.code !== 'unsupported-format' || !/Rotate/.test(String(er.j.error))) bad.push('旋转页该前置拒（unsupported-format 且 error 点名 /Rotate；v3.1.0 实测错误映射会删错字）');
+    // ④ --dry-run 试运行：只预览不写盘（wouldSucceed 真、产物文件不存在、输入 sha 不变）；needle 找不到时预览报 wouldSucceed=false 且同样不写盘不拒收
+    const ed = R(['--needle', 'SECRET TARGET STRING', '--dry-run']);
+    if (!ed.j || ed.j.ok !== true || ed.j.dryRun !== true) bad.push('dry-run 正向没跑通（试运行分支被摘＝预览变真跑）：' + JSON.stringify(ed.j && { code: ed.j.code, dryRun: ed.j.dryRun }));
+    else {
+      if (ed.j.wouldSucceed !== true) bad.push('dry-run 在全找得到的件上 wouldSucceed 该 true');
+      if (!Array.isArray(ed.j.notFoundNeedles) || ed.j.notFoundNeedles.length !== 0) bad.push('dry-run 的 notFoundNeedles 该为空');
+      if (ed.j.wouldWriteTo && fs.existsSync(ed.j.wouldWriteTo)) { try { fs.unlinkSync(ed.j.wouldWriteTo); } catch { } bad.push('dry-run 落盘了（试运行必须零写入）'); }
+      if (sha256(fs.readFileSync(f)) !== sha0) bad.push('dry-run 动了输入（试运行必须零写入）');
+    }
+    const ed2 = R(['--needle', 'NEVER THERE ZZ', '--dry-run']);
+    if (!ed2.j || ed2.j.ok !== true || ed2.j.dryRun !== true || ed2.j.wouldSucceed !== false) bad.push('dry-run 在找不到 needle 时该报 wouldSucceed=false 且不拒收（预览只点名）');
+    else if (ed2.j.wouldWriteTo && fs.existsSync(ed2.j.wouldWriteTo)) { try { fs.unlinkSync(ed2.j.wouldWriteTo); } catch { } bad.push('dry-run 落盘了（试运行必须零写入）'); }
+    // ⑤ XObject 残留：文字只在 Form XObject 里（页内容流无 BT 可删）⇒ 定位找得到、删不掉，验收必须 failed 抓出来（文档自承"验收会抓"，判据钉住它；v3.2.0 自检实测 pdftotext -bbox 看得见 XObject 文本）
+    const fXo = `${S}/rd-xo.pdf`;
+    fs.writeFileSync(fXo, mkPdfBytes([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> /XObject << /Fm0 6 0 R >> >> >>',
+      mkPdfStream('<< /Length 0 >>', Buffer.from('q 1 0 0 1 50 150 cm /Fm0 Do Q\n', 'latin1')),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      mkPdfStream('<< /Type /XObject /Subtype /Form /BBox [0 0 300 200] /Resources << /Font << /F1 5 0 R >> >> /Length 0 >>', Buffer.from('BT /F1 16 Tf 0 0 Td (SECRET XOBJECT ONLY) Tj ET\n', 'latin1')),
+    ], ''));
+    // 🔴 XObject 例必须独立 spawn（R 闭包的文件名固定在 rd-in.pdf，复用它会把两例写进同一文件）
+    const RX = (extra) => { const p = spawnSync(process.execPath, [__filename, 'redact', fXo, ...(extra || [])], { encoding: 'utf8' }); let j = null; try { j = JSON.parse(String(p.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { } return { p, j }; };
+    const ex = RX(['--needle', 'SECRET XOBJECT ONLY']);
+    if (!ex.j || ex.j.ok !== false || ex.j.code !== 'failed' || !/仍能找到/.test(String(ex.j.error))) bad.push('XObject 里的同一串必须 failed（定位找得到、页内容流删不掉，验收抓残留）：' + JSON.stringify(ex.j && { code: ex.j.code }));
     return bad.length ? bad.slice(0, 7).join(' | ') : true;
   });
 
@@ -10063,7 +10301,7 @@ const DEP_SKIP_REGISTRY = [
   const total = passed + failed + skipped;   // 计数口径含 SKIP：拿 passed 当总数会让外人首次运行退化成环境探针
   const keep = flags.keep === true;
   if (!keep) { try { fs.rmSync(S, { recursive: true, force: true }); } catch { /* 清不掉不影响结论，下面自报 */ } }
-  out({ ok: failed === 0, version: VERSION, passed, failed, skipped, total, filtered, checks, workdir: keep ? S : null, cleaned: !keep && !fs.existsSync(S), note: 'total=passed+failed+skipped；SKIP 只允许出现在"外人本机没有真实样本"这类用例上，且必须逐条点名；--keep 保留自检目录' });
+  out({ ok: failed === 0, version: VERSION, passed, failed, skipped, total, filtered, checks, workdir: keep ? S : null, cleaned: !keep && !fs.existsSync(S), note: 'total=passed+failed+skipped；SKIP 只用于明确的可选环境前置缺失（外部后端、公开树未携带的内账文档或未配置的可选样本），且必须逐条点名；--keep 保留自检目录' });
   if (failed) process.exit(1);
 }
 function cellRaw(file) { return zipRead(fs.readFileSync(file)).get('xl/worksheets/sheet1.xml'); }

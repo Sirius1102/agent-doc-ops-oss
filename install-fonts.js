@@ -40,7 +40,16 @@ function main(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--list') a.list = true;
     else if (argv[i] === '--check') a.check = true;
-    else if (argv[i] === '--source') a.source = argv[++i];
+    else if (argv[i] === '--source') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'invalid-args', error: '--source 缺值', next: '用 --source <目录> 指定字体备份目录' }));
+        process.exitCode = 1;
+        return;
+      }
+      a.source = value;
+      i++;
+    }
   }
   const man = readManifest();
   if (man.err) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: '清单读不到：' + man.err }, null, 1)); process.exit(1); }
@@ -56,10 +65,9 @@ function main(argv) {
   const verified = inPlace.filter((x) => x.sha256 && shaOf(path.join(fd, x.name)) === String(x.sha256).toLowerCase()).length;
   const miss = man.files.filter((x) => !fs.existsSync(path.join(fd, x.name)));
 
-  if (a.list || (a.check && !a.source)) {
-    // 哈希不匹配（同名异容）必须进退出码：ok 与 exit 都纳入，否则"报了 1 个 mismatch 却 exit 0"
-    // 会被自动化当作成功（2026-10-15 隔离测试实抓）。--check 只报不修，但不许报成功。
-    const ok = hashMismatch.length === 0;
+  if (a.list || a.check) {
+    // --list 是纯信息探针；--check 在缺件或哈希不一致时必须失败（退码非 0）。
+    const ok = a.list || (miss.length === 0 && hashMismatch.length === 0);
     console.log(JSON.stringify({ ok, op: 'install-fonts', mode: a.list ? 'list' : 'check', fontDir: fd, manifestCount: man.files.length, missing: miss.length, missingNames: miss.slice(0, 12).map((x) => x.name), hashVerified: verified, hashMismatch: hashMismatch.length, hashMismatchNames: hashMismatch.slice(0, 8).map((x) => x.name), note: miss.length ? '缺件从机主侧字体备份装载（--source <目录>，目录结构 = 清单"来源"字段）；写系统目录需管理员权限' : (hashMismatch.length ? `🔴 ${hashMismatch.length} 件在位但内容与清单 sha256 不一致（同名异容，可能是被替换/版本不同）——退出码非 0；修复 = 从机主侧备份重装（--source <目录>）` : '全在位且哈希一致'), hashNotCovered: man.files.length - verified - hashMismatch.length - miss.length }, null, 1));
     process.exit(ok ? 0 : 1);
   }

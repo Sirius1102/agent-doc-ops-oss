@@ -81,7 +81,7 @@ const MUTANTS = [
   { id: 'M16', file: D, only: 'cli 兜异常', name: '入口区把兜住的异常重新抛出（等于裸栈直出）', find: `try { return COMMANDS[cmd](rest); } catch (e) {`, to: `try { return COMMANDS[cmd](rest); } catch (e) { if (1) throw e;`, mustRed: ['cli 兜异常'] },
   { id: 'M17', file: D, only: '同一个假值', name: '拆掉"逐条实算 CRC vs 记录值"那一层对账（打架层留着，专测重算层有没有独立牙）', find: `if (got !== crc) throw new Error(`, to: `if (false && got !== crc) throw new Error(`, mustRed: ['zip 自写包坏在明处会被抓：局部+中央 CRC 同一个假值时逐条重算必须抛错'] },
   // M18/M19 各打 v1.1.3 新判据「doc 卫生」的一层：路径存在性 / 控制字符。两层必须能分开红（M9 与 M17 的教训）。
-  { id: 'M18', file: '给其它agent-调用卡.md', only: 'doc 卫生', name: '把在册备份路径写成一个不存在的同号目录（专打绝对路径存在性那一层）', find: `D:\\fonts-backup-LO-20260509`, to: `D:\\fonts-backup-LO-20260510`, mustRed: ['doc 卫生'] },
+  { id: 'M18', file: 'README.md', only: 'doc 卫生', name: '破坏公开仓库路径占位调用示例（文档卫生检查必须发现入口示例缺失）', find: 'node <REPO>\\dockit.js <命令> [参数...]', to: 'node <BROKEN-REPO>\\dockit.js <命令> [参数...]', mustRed: ['doc 卫生'] },
   { id: 'M19', file: 'README.md', only: 'doc 卫生', name: '往 README 标题前注入控制字符（专打"反斜杠转义被脚本吞掉"那一层，路径与条数都不动）', find: `## 一行调用`, to: `\u0007## 一行调用`, mustRed: ['doc 卫生'] },
   { id: 'M20', file: 'README.md', only: 'doc 卫生', name: '把 README 写的内置判据条数改成实际值 +1（专打"条数靠人记"那一层；README 的数字没跟上时本例会先报 ANCHOR-MISS）', find: `判据条数=${JC}`, to: `判据条数=${JC + 1}`, mustRed: ['doc 卫生'] },
   // M21–M23 是 v1.2.0 补的三条：台子例数、语言白名单、异步失败出口——前两条各打 doc 卫生/lang 的一层，第三条打那条一直没有覆盖的出口。
@@ -168,7 +168,7 @@ const MUTANTS = [
   { id: 'M77', file: 'test/char-baseline.js', only: '字符集基线', name: 'check 把实算码点数报多一个（实算=基线+新增−消失这条算术当场不自洽；旧写法是"基线数报成实算数"，只在真有漂移时才红＝条件牙，本轮全量跑复现 BAD 后换掉）——🔴 v2.10.0 锚串跟着 --at 改造换靶（b.set → bUse.set），攻击本身一模一样', find: `基线码点数: bUse.set.size, 实算码点数: all.size,`, to: `基线码点数: bUse.set.size, 实算码点数: all.size + 1,`, mustRed: ['字符集基线台子'] },
   { id: 'M78', file: 'test/char-baseline.js', only: '字符集基线', name: '拆掉 save 的同意闸门（谁都能把漂移的基线覆盖掉＝为了让台子绿而扩集合）', find: `if (process.env.DOCKIT_BASELINE_CONSENT !== '1') {`, to: `if (false && process.env.DOCKIT_BASELINE_CONSENT !== '1') {`, mustRed: ['字符集基线台子'] },
   { id: 'M79', file: 'test/char-baseline.js', only: '字符集基线', name: 'explain 的成员判定恒真（基线外汉字也说"在基线内"⇒ 注入对照与反向对照同时失去意义）', find: `在基线内: !!b && b.set.has(cp)`, to: `在基线内: true`, mustRed: ['字符集基线台子'] },
-  { id: 'M80', file: 'test/char-baseline.js', only: '字符集基线', name: '扫描面清空（台子扫不到装置的 LANG_FILES，两处一把尺断开）', find: `return [...new Set([...LANG_FILES, ...EXTRA, ...adrs])].filter((rel) => fs.existsSync(path.join(ROOT, rel)));`, to: `return [...new Set([...LANG_FILES, ...EXTRA, ...adrs])].filter(() => false);`, mustRed: ['字符集基线台子'] },
+  { id: 'M80', file: 'test/char-baseline.js', only: '字符集基线', name: '扫描面清空（台子扫不到装置的 LANG_FILES，两处一把尺断开）', find: `return [...new Set([...langFiles(), ...EXTRA, ...adrs])].filter((rel) => fs.existsSync(path.join(ROOT, rel)));`, to: `return [...new Set([...langFiles(), ...EXTRA, ...adrs])].filter(() => false);`, mustRed: ['字符集基线台子'] },
   { id: 'M81', file: 'test/char-baseline.js', only: '字符集基线', name: '消失集算错（把整个基线都当成消失，实算=基线+新增−消失这条算术当场不自洽）——🔴 v2.10.0 锚串跟着 --at 改造换靶（b → bUse），攻击本身一模一样；与 M255（恒空）是同一面的两个方向', find: `const gone = [...bUse.set].filter((cp) => !all.has(cp)).sort((x, y) => x - y);`, to: `const gone = [...bUse.set].sort((x, y) => x - y);`, mustRed: ['字符集基线台子'] },
   // M44/M45 + M83–M85 打 v1.6.0 R4-a（verify 两条取字路线对账）：算出来的覆盖率、幻影方向、missing 判定、降级与半条模式各一层。
   { id: 'M44', file: D, only: 'verify 正向', name: '覆盖率恒报 1.0（《方案》点名的变异：正向夹具照样绿，只有"必须有一例读不出"的反面对照能抓它）', find: `const coverage = mode === 'both' ? (aTotal ? +((aTotal - missingIdx.length) / aTotal).toFixed(5) : 1) : null;`, to: `const coverage = mode === 'both' ? 1 : null;`, mustRed: ['verify 正向'] },
@@ -234,15 +234,15 @@ const MUTANTS = [
   { id: 'M108', file: D, only: '依赖覆盖率闸', name: 'AUD-1 (a)：删掉一条判据的 {needs:kit} 声明——缺失态它必须红（不许被洗），覆盖率闸抓 failed≠控制组', find: "t('recalc 无缓存公式被算出（B1=A1*2 → 6）', () => /<v>6<\\/v>/.test(recXlsx()), {needs:'kit'});", to: "t('recalc 无缓存公式被算出（B1=A1*2 → 6）', () => /<v>6<\\/v>/.test(recXlsx()));", mustRed: ['依赖覆盖率闸'], msg: ['剔除 aud1-stub 控制组'] },
   { id: 'M109', file: D, only: 'AUD-1 第四臂哨兵', name: 'AUD-1 (c)：归因置位改恒真（wrapT 退回"任何缺失态红都洗"的事后洗白）——第四臂哨兵必须当场抓洗白复辟', find: "if (needs && needs.needs === 'kit' && !kitPresent())", to: 'if (!kitPresent())', mustRed: ['AUD-1 第四臂哨兵'], msg: ['洗白复辟'] },
   // ---- v1.6.7（WP-A/WP-B 轮）：夹具自产与留档实算的牙。期望值 107→109（**改的是期望值不是松紧**：全部新增攻击面）。
-  { id: 'M110', file: D, only: 'zipWrite 逐条目', name: 'WP-A：拆掉自产夹具前置、恢复旧出口且令其守卫与实际读取脱节（出口查 _probe/cn.odt、实际读不存在的夹具）——判据失去夹具必须当场红（threw ENOENT），不许静默', find: "    const odtReal = odtFixturePath;\n    const src = fs.readFileSync(odtReal);", to: "    if (!fs.existsSync(ROOT + '/_probe/cn.odt')) return 'skip（本机没有 _probe/cn.odt，真件回环那一子句没得核——旧出口复辟）';\n    const odtReal = ROOT + '/_probe/no-such-fixture.odt';\n    const src = fs.readFileSync(odtReal);", mustRed: ['zipWrite 逐条目'], msg: ['threw'] },
+  { id: 'M110', file: D, only: 'zipWrite 逐条目', name: '把自产夹具切到一个不存在的公开夹具路径——回环判据必须发现读取失败', find: "    const odtReal = odtFixturePath;\n    const src = fs.readFileSync(odtReal);", to: "    const odtReal = ROOT + '/test/fixtures/no-such-fixture.odt';\n    const src = fs.readFileSync(odtReal);", mustRed: ['zipWrite 逐条目'], msg: ['threw ENOENT'] },
   { id: 'M111', file: D, only: '后端留档件实算', name: 'WP-B：注入坏归档副本（153 字节被改）并经覆盖口喂给判据——实算 sha 必须与登记逐字不符而红（env 真被吃的运行时证明）', find: "  t('后端留档件实算：bin/archive/officecli-win-x64-<版本>.exe 的 sha256 必须逐字等于登记枚集', () => {", to: "  t('后端留档件实算：bin/archive/officecli-win-x64-<版本>.exe 的 sha256 必须逐字等于登记枚集', () => {\n    process.env.DOCKIT_OFFICECLI_ARCHIVE_DIR = ROOT + '/_tmp/m111-badarchive';\n    fs.mkdirSync(ROOT + '/_tmp/m111-badarchive', { recursive: true });\n    fs.copyFileSync(process.env.DOCKIT_OFFICECLI_ARCHIVE_SEED || 'C:/Windows/Fonts/Alef-Bold.ttf', ROOT + '/_tmp/m111-badarchive/officecli-win-x64-1.0.153.exe');\n    fs.appendFileSync(ROOT + '/_tmp/m111-badarchive/officecli-win-x64-1.0.153.exe', 'M111-TAMPER');", mustRed: ['后端留档件实算'], msg: ['实算'] },
-  { id: 'M112', file: D, only: '后端留档件实算', name: 'WP-B：归档目录缺失态（env 指不存在路径）——未变异态必须 SKIP（envPreflight 验），拆掉守卫后必须红（threw ENOENT，不许静默）', find: "    if (!fs.existsSync(ARCHIVE_DIR)) return 'skip（后端留档目录不在位（解析 ' + ARCHIVE_DIR + '）——外人克隆必走这支；在位机器缺目录属配置缺失，不冒充通过）';", to: "    if (false && !fs.existsSync(ARCHIVE_DIR)) return 'skip（后端留档目录不在位（解析 ' + ARCHIVE_DIR + '）——外人克隆必走这支；在位机器缺目录属配置缺失，不冒充通过）';", env: { DOCKIT_OFFICECLI_ARCHIVE_DIR: 'Z:\\__no_archive__' }, mustRed: ['后端留档件实算'], msg: ['threw'] },
+  { id: 'M112', file: D, only: '后端留档件实算', name: 'WP-B：归档目录缺失态必须先 SKIP；拆掉守卫会继续依赖公开仓未登记的归档 SHA 并误报 FAIL', find: "    if (!fs.existsSync(ARCHIVE_DIR)) return 'skip（后端留档目录不在位（解析 ' + ARCHIVE_DIR + '）——外人克隆必走这支；在位机器缺目录属配置缺失，不冒充通过）';", to: "    if (false && !fs.existsSync(ARCHIVE_DIR)) return 'skip（后端留档目录不在位（解析 ' + ARCHIVE_DIR + '）——外人克隆必走这支；在位机器缺目录属配置缺失，不冒充通过）';", env: { DOCKIT_OFFICECLI_ARCHIVE_DIR: path.join(ROOT, '_tmp', 'mutant-no-archive-' + process.pid) }, mustRed: ['后端留档件实算'], msg: ['64 位 hex 认领值'] },
     { id: 'M113', file: D, only: '判据定义数与本轮走到', name: '假判据：在永不执行的分支里定义一条判据——计数说有它、执行里没有，对账网必须当场红（这条正是本轮抓"计数尺子被自身代码污染"时补的网）', find: '  const total = passed + failed + skipped;   // 计数口径含 SKIP', to: "  if (false) {\n    t('M113 定义了但永不执行的探针', () => true);\n  }\n  const total = passed + failed + skipped;   // 计数口径含 SKIP", mustRed: ['判据定义数与本轮走到的条数对账'], msg: ['假判据'] },
   // ---- v1.6.7（监工侧 WP-C 审计轮）：审计的两层防线各配一例，谁能单独打红谁才算数（"冗余防线只有一层挨过攻击"那条教训）。
   { id: 'M114', file: D, only: '后端调用审计', name: 'WP-C：officecliEnv 不再把 TMP/TEMP 指到装置目录（10-06 实犯的那条漏项）——审计若只信自报就发现不了，独立腿必须当场红', find: "const officecliEnv = (tmpDir) => Object.assign({}, process.env, OFFICECLI_ISOLATION_ENV, { TMP: tmpDir || TMP_DIR, TEMP: tmpDir || TMP_DIR });", to: "const officecliEnv = (tmpDir) => Object.assign({}, process.env, OFFICECLI_ISOLATION_ENV);", mustRed: ['后端调用审计'], msg: ['officecliEnv'] },
   { id: 'M115', file: D, only: '后端调用审计', name: 'WP-C：拆掉调用点上的审计写入（函数还在、台账永远不涨）——审计与 spawn 必须一一对应，多写少写都要红', find: '  const auditWrite = auditBackendCall(auditRec);', to: '  const auditWrite = { ok: true };', mustRed: ['后端调用审计'], msg: ['审计'] },
   // ---- v1.6.7 WP-C（监工侧 Q-13）：入口数字对账的两层牙。期望值 113→115（**改的是期望值不是松紧**：全是新增攻击面）。
-  { id: 'M116', file: 'README.md', only: '入口数字与源对账', name: 'Q-13：把 README 写的非空入口数改成 +1（登记表没动——数字靠人记就一定会有人对不上）', find: '非空入口数=7', to: '非空入口数=8', mustRed: ['入口数字与源对账'], msg: ['现算 7 条'] },
+  { id: 'M116', file: 'README.md', only: '入口数字与源对账', name: 'Q-13：把 README 写的非空入口数改成 +1（登记表没动——数字靠人记就一定会有人对不上）', find: '非空入口数=6', to: '非空入口数=7', mustRed: ['入口数字与源对账'], msg: ['现算 6 条'] },
   { id: 'M117', file: D, only: '入口数字与源对账', name: 'Q-13：把"非空路径条数"数成"总行数"（20 行 vs 6 条非空——尺子选错列时文档数字看着更像对的）', find: "const nonEmpty = rows.filter((r) => r && typeof r['入口文件绝对路径'] === 'string' && r['入口文件绝对路径'].trim()).length;", to: 'const nonEmpty = rows.length;', mustRed: ['入口数字与源对账'], msg: ['现算 20 条'] },
   // ---- v1.7.0（监工侧：引擎依赖恢复 + chi_sim 耐久位 + 语言包哨兵）：期望值 115→117，**改的是期望值不是松紧**——没有一条既有判据被删或被放宽。
   { id: 'M118', file: D, only: 'env doctor', name: '把语言包哨兵的 WARN 升成 FAIL（缺包即整轮红）——「装没装中文包是机器事实，不许打穿外人克隆首跑全绿」这条口径必须当场红', find: "  push('ocr-lang-pack', true, chiSimPresent", to: "  push('ocr-lang-pack', chiSimPresent, chiSimPresent", mustRed: ['env doctor 全绿'], msg: ['整轮判红'] },
@@ -251,7 +251,7 @@ const MUTANTS = [
   { id: 'M120', file: D, only: '裸树', name: '把 doctor 引擎扫描那句的 try/catch 拆掉、恢复成裸 readdirSync——node_modules 整棵不在位时必须又退化成"装置内部异常"且 checks 字段消失，裸树判据要当场点名它走了 die 分支（这正是 10-07 19:40 之后调用方实际看到的形状）', find: "  try { eng = fs.readdirSync(ROOT + '/node_modules/@deepseek-ai', { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); }\n  catch (e) { engWhy = String((e && e.code) || e); }", to: "  eng = fs.readdirSync(ROOT + '/node_modules/@deepseek-ai', { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);", mustRed: ['裸树'], msg: ['die 分支'] },
   { id: 'M121', file: D, only: 'WP-A 存在性', name: '把真件 ODT 的路径改回 gitignore 的 _probe（v1.7.1 入仓的成果被回退）——存在性判据必须点名。这条打"入仓"那一半，与 M119 打的"自产"那一半各响各的（规范 §4.4 第 7 条：冗余防线不许搭便车）', find: "    const odtReal = ROOT + '/test/fixtures/cn.odt';", to: "    const odtReal = ROOT + '/_probe/cn.odt';", mustRed: ['WP-A 存在性'], msg: ['又出现了'] },
   // ---- v1.7.2 五例：替身字体哨兵三条覆盖面（M122–M124，各打一层）＋ selftest 两处异步尾巴形状（M125 自建父目录／M126 临时根带进程号）。期望值 119→124（**改的是期望值不是松紧**——没有一条既有判据被删或放宽）。
-  { id: 'M122', file: D, only: 'substitute-fonts 哨兵', name: '把"按清单核全量"偷偷退回"只核 7 个固定名"——正是 2026-10-09 那次"系统目录被直删 6 件、哨兵只报 1 件"的形状；装置必须自报已核条目数，否则这条静默缩水看不见（第一版断言就是没牙被这台子抓出来的：PASS 文案印清单件数、与实际核了几个无关）', find: "    const miss = fm.files.filter((x) => { checked++; return !fs.existsSync(path.join(fdir, x.name)); });", to: "    const miss = SENTINELS.filter((n) => !fs.existsSync(path.join(fdir, n))).map((n) => ({ name: n }));", mustRed: ['substitute-fonts 哨兵'], msg: ['已核条目数'] },
+  { id: 'M122', file: D, only: 'substitute-fonts 哨兵', name: '把"按清单核全量"偷偷退回"只核 7 个固定名"；合成标定机器态必须发现已核数偏离清单', find: "    const miss = fm.files.filter((x) => { checked++; return !fs.existsSync(path.join(fdir, x.name)); });", to: "    const miss = SENTINELS.filter((n) => !fs.existsSync(path.join(fdir, n))).map((n) => ({ name: n }));", mustRed: ['substitute-fonts 哨兵'], msg: ['已核数不等于清单件数'] },
   { id: 'M123', file: D, only: 'substitute-fonts 哨兵', name: '把"清单标定的机器不是本机"那支的 warn 位关掉——清单是机器事实，关掉后这一支渲染成**静默 PASS**（别处克隆会被说成"替身字体全在位"）。🔴 第一版这例是**假攻击**：它改 pass 位，而 push 渲染优先级是 WARN>PASS/FAIL，warn=true 时输出一个字节都没变——台子报"未变红"才暴露，故改打可观测的 warn 位；第二版我又把锚词写成"判红"方向的短语，被"红因缺失"当场抓出（红是对的红因是错的）', find: "'全在位'}`, true);", to: "'全在位'}`, false);", mustRed: ['substitute-fonts 哨兵'], msg: ['非标定机器必须'] },
   { id: 'M124', file: D, only: 'substitute-fonts 哨兵', name: '清单不在位时把 warn 位关掉（→ 静默渲染成 PASS）——覆盖面缺口被"装作体检通过"掩盖，缺清单必须 WARN 并点名解析到的路径。同 M123 的教训：打 pass 位是假攻击，这里打 warn 位', find: " 在位`), absent.length === 0);", to: " 在位`), false);", mustRed: ['substitute-fonts 哨兵'], msg: ['清单缺失必须是'] },
   { id: 'M125', file: D, only: 'WP-A 存在性', name: '删掉惰性 ODT 夹具写入点的自建父目录——套件收尾后才首次访问 mk-odt 时会抛 ENOENT，被顶层兜成 die 信封把整轮 selftest 的 JSON 顶掉（覆盖率闸因此只看到 failed=undefined；2026-10-09 实犯）；静态形状判据必须点名', find: "    fs.mkdirSync(path.dirname(p), { recursive: true });\n", to: '', mustRed: ['WP-A 存在性'], msg: ['自建父目录'] },
@@ -296,7 +296,7 @@ const MUTANTS = [
     const err = String(lr.stderr || lr.stdout).trim();
     if (/zzneverlistencrypt/i.test(err)) die('unsupported-format'`, mustRed: ['media PDF 拒绝面：非容器/超 cap 落地前拒（不回 dir）/加密件'] },
   { id: 'M155', file: D, only: 'inspect PDF 表单探针', name: '把 AcroForm 目录键查飞（cat.lookup 拿不到表单目录）——含表单 PDF 被报成 form=null，表单探针牙必须当场点名', find: "cat.lookup(PDFName.of('AcroForm'))", to: "cat.lookup(PDFName.of('zzNoForm'))", mustRed: ['inspect PDF 表单探针：AcroForm 字段计数＋拼拆丢失预警，无表单态为 null'] },
-  { id: 'M156', file: D, only: 'pdftext 直取文本层', name: '让 pdftext 把正文回显进 JSON（隐私牙：与 ocr 同口径，文本只落 txt 不进回报）——回显即判据必须当场点名', find: 'pageBreaks, ms: Date.now() - t0, warnings:', to: 'pageBreaks, text: txt.slice(0, 50), ms: Date.now() - t0, warnings:', mustRed: ['pdftext 直取文本层（数字中文 PDF 免 OCR）：txt 含已知中文、chars>0、正文不回显进 JSON'] },
+  { id: 'M156', file: D, only: 'pdftext 直取文本层', name: '让 pdftext 把正文回显进 JSON（隐私牙：与 ocr 同口径，文本只落 txt 不进回报）——回显即判据必须当场点名', find: 'pageBreaks, ...(popplerOut !== outPath ? { asciiTmpReroute: true } : {}), ms: Date.now() - t0, warnings:', to: 'pageBreaks, text: txt.slice(0, 50), ...(popplerOut !== outPath ? { asciiTmpReroute: true } : {}), ms: Date.now() - t0, warnings:', mustRed: ['pdftext 直取文本层（数字中文 PDF 免 OCR）：txt 含已知中文、chars>0、正文不回显进 JSON'] },
   // M157–M159 打 v2.2.0 check 的 docx 修订/批注检测（任务书-I 计划2）：ins/del/comments 三条路径各配一次独立攻击。
   { id: 'M157', file: D, only: '修订/批注', name: '把 w:ins 从修订正则里摘掉（只留 del）——插入修订漏检、revisions 2→1，修订牙必须当场点名', find: "for (const m of str(d).matchAll(/<w:(ins|del)\\b([^>]*?)>/g)) {", to: "for (const m of str(d).matchAll(/<w:(del)\\b([^>]*?)>/g)) {", mustRed: ['check docx 修订/批注：含 w:ins/w:del 与 comments.xml 时分别点名'] },
   { id: 'M158', file: D, only: '修订/批注', name: '把 w:del 从修订正则里摘掉（只留 ins）——删除修订漏检、revisions 2→1，修订牙必须当场点名', find: "for (const m of str(d).matchAll(/<w:(ins|del)\\b([^>]*?)>/g)) {", to: "for (const m of str(d).matchAll(/<w:(ins)\\b([^>]*?)>/g)) {", mustRed: ['check docx 修订/批注：含 w:ins/w:del 与 comments.xml 时分别点名'] },
@@ -379,8 +379,8 @@ const MUTANTS = [
   { id: 'M210', file: D, only: 'redline', name: 'reject 的 delText→w:t 还原拆掉（拒绝修订后文字回不来，正文缺一段却自称处理过）', find: ".replace(/<w:delText(\\b[^>]*)>/g, '<w:t$1>')", to: ".replace(/<w:zzzDelText(\\b[^>]*)>/g, '<w:t$1>')", mustRed: ['redline 修订写入'], msg: ['应当还原成正常文本'] },
   { id: 'M211', file: D, only: "redline", name: "批注的 rels 登记拆掉（包里有 comments.xml 却没有指向它的关系：只看部件的读者觉得没问题，Word 直接报损坏）", find: "      if (!/comments/.test(r)) {", to: "      if (false && !/comments/.test(r)) {", mustRed: ["redline 修订写入"], msg: ["没有 rels 指向它"] },
   { id: 'M212', file: D, only: "redline", name: "格式修订的 reject 守卫拆掉（把\"旧属性表还原\"这件做不了的事假装做了）", find: "if (fmt.length) die('unsupported-format'", to: "if (false && fmt.length) die('unsupported-format'", mustRed: ["redline 修订写入"], msg: ["格式修订"] },
-  { id: 'M213', file: D, only: "redact", name: "🔴 删算子那一步拆掉、只画黑框（视觉盖住但文本层还在＝假涂黑，正是本命令存在的理由被抽空）", find: "          if (!inside) return blk;", to: "          if (true) return blk;", mustRed: ["redact 真涂黑"], msg: ["正向跑不通"] },
-  { id: 'M214', file: D, only: "redact", name: "needle 找不到的前置拒拆掉（找不到就等于给了调用方一张空白的脱敏回执）", find: "if (notFound.length) die('invalid-output'", to: "if (false && notFound.length) die('invalid-output'", mustRed: ["redact 真涂黑"], msg: ["needle 找不到却没拒"] },
+  { id: 'M213', file: D, only: "redact", name: "🔴 删算子那一步拆掉、只画黑框（视觉盖住但文本层还在＝假涂黑，正是本命令存在的理由被抽空）", find: "          if (!inside) continue;", to: "          if (true) continue;", mustRed: ["redact 真涂黑"], msg: ["正向跑不通"] },
+  { id: 'M214', file: D, only: "redact", name: "needle 找不到的前置拒拆掉（找不到就等于给了调用方一张空白的脱敏回执）", find: "if (notFound.length && !dryRun) die('invalid-output'", to: "if (false && notFound.length && !dryRun) die('invalid-output'", mustRed: ["redact 真涂黑"], msg: ["needle 找不到却没拒"] },
   { id: 'M215', file: D, only: "tables", name: "词框纵坐标换算写反（pdftotext 顶原点、内容流底原点；不换算就把词塞进错行——表头跑到表尾）", find: "cy: ph - (w.yMin + w.yMax) / 2", to: "cy: (w.yMin + w.yMax) / 2", mustRed: ["tables 几何抽取"], msg: ["表头行顺序不对"] },
   { id: 'M216', file: D, only: "compress", name: "可达性回收退化成\"删掉全部间接对象\"（闭包写反：页数与正文必然对不上，无损核验必须抓）", find: "for (const [ref] of [...doc.context.enumerateIndirectObjects()]) if (!reachable.has(ref.objectNumber))", to: "for (const [ref] of [...doc.context.enumerateIndirectObjects()]) if (true)", mustRed: ["compress"] },
   { id: 'M217', file: D, only: "compress", name: "可达性回收整段拆掉（孤儿对象原样留在产物里——声称瘦身却没瘦）", find: "for (const [ref] of [...doc.context.enumerateIndirectObjects()]) if (!reachable.has(ref.objectNumber))", to: "for (const [ref] of [...doc.context.enumerateIndirectObjects()]) if (false && !reachable.has(ref.objectNumber))", mustRed: ["compress"], msg: ["没被回收"] },
@@ -419,7 +419,7 @@ const MUTANTS = [
   { id: 'M249', file: D, only: '回收面', name: 'gc 的执行面把 renameSync 换成 rmSync（"可逆隔离"变成真删除）——机主口径：删除换成可逆隔离，这一刀必须当场红', find: "fs.renameSync(srcPath, dstPath);", to: "fs.rmSync(srcPath, { force: true }); // M249：直接删", mustRed: ['回收面'], msg: ['rmSync＝删除而非移动'] },
   { id: 'M250', file: D, only: '输入体积闸', name: 'combine 只拦第一路输入（收 2..N 份 PDF 的命令，第 2 份起照样整件 readFileSync 进内存——"一族都不许漏"里的"一路都不许漏"）', find: 'for (let gi = 0; gi < positional.length; gi += 1) inputSizeGuard(positional[gi], flags[\'max-input-bytes\'], `combine 第 ${gi + 1} 路输入`);', to: "if (positional.length) inputSizeGuard(positional[0], flags['max-input-bytes'], 'combine 第 1 路输入'); // M250：只拦头一路", mustRed: ['输入体积闸'], msg: ['第二路'] },
   { id: 'M251', file: D, only: '输入体积闸', name: 'merge 的数据件漏闸（模板拦住了、数据 JSON 仍整件读进内存；第三个位置参数是输出、不在闸面）', find: "  inputSizeGuard(positional[1], flags['max-input-bytes'], 'merge 的数据件'); // 🔴 F6 补口：数据 JSON 也是整件读进内存的输入（第三个位置参数是输出，不在闸面）", to: '  void 0; // M251：数据件这一路摘了', mustRed: ['输入体积闸'], msg: ['数据件'] },
-  { id: 'M252', file: D, only: '回收面', name: '隔离区落点写回绝对路径常量（真克隆门实抓的形状：主树与写死的盘恰好同卷所以全绿，clone 到别的卷时 renameSync 跨卷必 EXDEV ⇒ "搬移不删除"在别的树上是空的）——静态牙必须红，行为面这一例落在 --yes 执行失败那一步', find: "const GC_QUARANTINE_ROOT = path.dirname(ROOT) + '/垃圾产物';", to: "const GC_QUARANTINE_ROOT = path.dirname(ROOT) + '/垃圾产物-mutant-cross-volume';", mustRed: ['回收面'], msg: ['跨卷形状会复辟'] },
+  { id: 'M252', file: D, only: '回收面', name: '隔离区落点改为独立绝对路径（迁移到其他卷时 renameSync 会失败）', find: "const GC_QUARANTINE_ROOT = path.dirname(ROOT) + '/垃圾产物';", to: "const GC_QUARANTINE_ROOT = path.resolve('C:/__mutant__');", mustRed: ['回收面'], msg: ['跨卷形状会复辟'] },
   { id: 'M253', file: D, only: '回收面', name: '--exclude 检查摘掉（被排除的"真工件形状"照样进回收面）——2026-10-14 实测候选面里混着 12 件真交付件产物：装置签名只证明"不是人起的名字"，不证明"不是真工件"', find: 'if (exclude && exclude.length && exclude.some((pre) => name.startsWith(pre))) { excluded.push(name); continue; }', to: 'if (false && exclude && exclude.length && exclude.some((pre) => name.startsWith(pre))) { excluded.push(name); continue; }', mustRed: ['回收面'], msg: ['还是被搬走了'] },
   { id: 'M254', file: D, only: '回收面', name: '--exclude 给空清单不再拒（静默"什么都不排除"，调用方以为自己已经圈住了真工件）', find: "if (flags.exclude !== undefined && !exclude.length) die('invalid-output'", to: "if (false && flags.exclude !== undefined && !exclude.length) die('invalid-output'", mustRed: ['回收面'], msg: ['空清单没拒'] },
   { id: 'M255', file: 'test/char-baseline.js', only: '字符集基线台子', name: '「消失码点」计算打飞成恒空——零消失闸因此说不出任何事（基线与语料相同时真实消失本来就是 0，坏实现永远抓不到 ⇒ 判据必须用 --at 造一个已知消失来量）', find: 'const gone = [...bUse.set].filter((cp) => !all.has(cp)).sort((x, y) => x - y);', to: 'const gone = []; // M255：消失面恒空', mustRed: ['字符集基线台子'], msg: ['消失"这一面是坏的'] },
@@ -430,11 +430,37 @@ const MUTANTS = [
   { id: 'M259', file: D, only: '输入体积闸', name: '--max-input-bytes 非法值校验整个摘掉（非整数照旧静默回退默认、0 会错判成 input-too-large——"写了值等于没写"的放宽）', find: "    if (!Number.isInteger(v) || v < 1) die('invalid-output',", to: "    if (false) die('invalid-output',", mustRed: ['输入体积闸'], msg: ['没被拒'] },
   { id: 'M260', file: D, only: '回收面', name: 'gc --base 空/纯空白不再拒（静默"不过滤"，调用方以为自己圈住了子集）', find: "  if (flags.base !== undefined && !String(flags.base).trim()) die('invalid-output',", to: "  if (false && flags.base !== undefined && !String(flags.base).trim()) die('invalid-output',", mustRed: ['回收面'], msg: ['没被拒'] },
   { id: 'M261', file: 'test/char-baseline.js', only: '字符集基线台子', name: '--at 缺值守卫摘掉（缺值/后跟开关会被当成路径又报"文件不在"，方向不清；静默形状复辟）', find: "  if (atIdx >= 0 && (!argv[atIdx + 1] || String(argv[atIdx + 1]).startsWith('--')))", to: "  if (false && atIdx >= 0 && (!argv[atIdx + 1] || String(argv[atIdx + 1]).startsWith('--')))", mustRed: ['字符集基线台子'], msg: ['缺值'] },
+  // ---- v3.1.0（2026-10-15 外部审查报告处理轮）：redact 三件每修一处配一刀 ----
+  { id: 'M262', file: D, only: 'redact 真涂黑', name: '--fill 开关整个摘掉（fill 恒为 black＝删字留白出口消失，"脱敏与删内容捆死"的旧形状复辟）', find: "  const fill = flags.fill !== undefined && flags.fill !== null ? String(flags.fill).toLowerCase() : 'black';", to: "  const fill = 'black'; // M262：开关摘了", mustRed: ['redact 真涂黑'], msg: ['--fill none 正向没跑通'] },
+  { id: 'M263', file: D, only: 'redact 真涂黑', name: '删多统计整个摘掉（outsidePts 不再进 crossOps＝删多静默，"验收只防删漏不防删多"的老形状复辟）', find: '          if (outsidePts.length) crossOps.push({ page: pageNum, outsidePts: outsidePts.length });', to: '          void outsidePts; // M263：统计摘了', mustRed: ['redact 真涂黑'], msg: ['删多预警没响'] },
+  { id: 'M264', file: D, only: 'redact 真涂黑', name: '旋转页前置守卫摘掉（/Rotate≠0 的件照跑＝按错误映射删错字/删不动，v3.1.0 实测坐标失配的旧形状复辟）', find: "    if (rotatedPages.length && !dryRun) die('unsupported-format',", to: "    if (false && rotatedPages.length && !dryRun) die('unsupported-format',", mustRed: ['redact 真涂黑'], msg: ['旋转页该前置拒'] },
+  { id: 'M265', file: D, only: 'redact 真涂黑', name: '括号感知切分换回旧非贪婪正则（字符串字面量 TARGET 的 ET 截断复现＝删块边界失配，v2.7.0 起的老缺陷）', find: '        for (const [bs, be] of findTextBlocks(s).reverse()) {', to: '        for (const bs of [0]) { const be = s.length; void findTextBlocks;', mustRed: ['redact 真涂黑'], msg: ['该留的文字也弄丢了'] },
+  { id: 'M266', file: D, only: 'redact 真涂黑', name: '--dry-run 试运行分支摘掉（预览变真跑＝删字画框落盘，试运行零写入形状复辟）', find: '    if (dryRun) {', to: '    if (false) { // M266：试运行分支摘掉', mustRed: ['redact 真涂黑'], msg: ['dry-run 正向没跑通'] },
 ];
 
 const argv = process.argv.slice(2);
 if (argv.includes('--list')) { for (const m of MUTANTS) console.log(`${m.id} [${m.file}] 只跑(${m.only}) → 弄坏：${m.name} ｜ 应变红：${m.mustRed.join(' / ')}${m.msg ? ' ｜ 红因须含：' + m.msg.join(' / ') : ''}`); process.exit(0); }
-const picked = argv.filter((a) => /^M\d+$/.test(a)).length ? MUTANTS.filter((m) => argv.includes(m.id)) : MUTANTS;
+const forcePublic = argv.includes('--public');
+const requestedIds = argv.filter((a) => /^M\d+$/.test(a));
+const unknownArgs = argv.filter((a) => a !== '--public' && !/^M\d+$/.test(a));
+const unknownIds = requestedIds.filter((id) => !MUTANTS.some((m) => m.id === id));
+if (unknownArgs.length || unknownIds.length) {
+  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M266）' }, null, 1));
+  process.exit(2);
+}
+const requested = requestedIds.length ? MUTANTS.filter((m) => requestedIds.includes(m.id)) : MUTANTS;
+const missingTargets = requested.filter((m) => !fs.existsSync(path.join(ROOT, m.file)));
+const publicOnly = forcePublic || (!requestedIds.length && missingTargets.length > 0);
+if (requestedIds.length && missingTargets.length) {
+  console.log(JSON.stringify({ ok: false, code: 'missing-mutant-targets', missing: missingTargets.map((m) => ({ id: m.id, file: m.file })), next: '该变异依赖未随公开仓分发的内部文件；请在完整工作树中运行' }, null, 1));
+  process.exit(2);
+}
+const picked = publicOnly ? requested.filter((m) => fs.existsSync(path.join(ROOT, m.file))) : requested;
+if (!publicOnly && missingTargets.length) {
+  console.log(JSON.stringify({ ok: false, code: 'missing-mutant-targets', missing: missingTargets.map((m) => ({ id: m.id, file: m.file })), next: '公开克隆请用 node test/mutant.js --public；该模式会排除未随公开仓分发的内部文档靶' }, null, 1));
+  process.exit(2);
+}
+if (publicOnly) console.log('公开子集：可见靶 ' + picked.length + '/' + requested.length + ' 例；排除 ' + missingTargets.length + ' 个缺失靶文件');
 
 fs.mkdirSync(path.join(ROOT, '_tmp'), { recursive: true });
 
@@ -473,19 +499,27 @@ function envPreflight(m) {
 //    一条红 ⇒ 一批假绿，比没变异更坏（弱变异）。做法＝先跑一发**未变异全量**（约 85 秒）取基线红名单；
 //    某例的 mustRed 命中名单 ⇒ 判 BASELINE-RED（计入 BAD、退码非零）——这一例今天说不出话，别冒充有牙。
 let baseRedNames = [];
+let baseSkipNames = [];
 {
   const r0 = spawnSync(process.execPath, [path.join(ROOT, D), 'selftest'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, cwd: ROOT, timeout: 600000, env: { ...process.env, ...SAFE_BACKEND_ENV } });
   let j0 = null; try { j0 = JSON.parse(r0.stdout); } catch {}
   if (!j0) { console.error('🔴 基线预检：未变异全量 selftest 跑不出 JSON，台子不出结论'); process.exit(2); }
   baseRedNames = (j0.checks || []).filter((c) => c.startsWith('FAIL')).map((c) => c.slice(5, c.indexOf(' :: ') < 0 ? undefined : c.indexOf(' :: ')));
+  baseSkipNames = (j0.checks || []).filter((c) => c.startsWith('SKIP')).map((c) => c.slice(5, c.indexOf(' :: ') < 0 ? undefined : c.indexOf(' :: ')));
   if (baseRedNames.length) {
     console.error('🔴 基线预检：未变异态就有 ' + baseRedNames.length + ' 条红 ⇒ mustRed 指着它们的变异例今天说不出结论（判 BASELINE-RED）：');
     for (const n of baseRedNames) console.error('   · ' + n.slice(0, 70));
   }
 }
-const rows = []; let ok = 0, bad = 0, baseRedCut = 0, selEmpty = 0;
+const rows = []; let ok = 0, skipped = 0, bad = 0, baseRedCut = 0, selEmpty = 0;
 try {
   for (const m of picked) {
+    const unavailable = !m.env ? m.mustRed.filter((n) => baseSkipNames.some((s) => s.includes(n))) : [];
+    if (unavailable.length) {
+      skipped++;
+      rows.push({ id: m.id, name: m.name, verdict: `UNAVAILABLE-SKIP（基线 selftest 的目标判据为 SKIP：${unavailable.join(' / ')}）` });
+      continue;
+    }
     const p = path.join(ROOT, m.file);
     const orig = touched.get(p);
     const text = orig.toString('utf8');
@@ -531,14 +565,14 @@ try {
     const unexpected = red.filter((c) => !m.mustRed.some((n) => c.includes(n)) && !(m.msg || []).some((n) => c.includes(n)));
     const good = !missed.length && !missedMsg.length && r.status === 1 && ran > 0 && (m.blast || !unexpected.length);
     if (good) ok++; else bad++;
-    rows.push({ id: m.id, name: m.name, 用时秒: +((Date.now() - started) / 1000).toFixed(1), 跑了判据数: ran, 只跑: m.only, 应变红: m.mustRed, 应带红因: m.msg || [], 实际红: red.map((c) => c.slice(0, 60)), 未变红: missed, 红因缺失: missedMsg, 意外红: m.blast ? '(blast 允许连带红)' : unexpected, verdict: good ? 'OK' : 'BAD' });
+    rows.push({ id: m.id, name: m.name, 用时秒: +((Date.now() - started) / 1000).toFixed(1), 跑了判据数: ran, 只跑: m.only, 应变红: m.mustRed, 应带红因: m.msg || [], 实际红: red.map((c) => c.slice(0, 180)), 未变红: missed, 红因缺失: missedMsg, 意外红: m.blast ? '(blast 允许连带红)' : unexpected, verdict: good ? 'OK' : 'BAD' });
   }
 } finally {
   // 🔴 v2.7.0：结论**先落 stdout**，再做收尾还原——旧顺序下一次锁异常就把整轮 221 例的读数吞掉（2026-10-14 实犯）。
   console.log(JSON.stringify(rows, null, 1));
   for (const [p, buf] of touched) writeHard(p, buf, '收尾还原');
   const mism = [...touched.entries()].filter(([p, buf]) => md5(fs.readFileSync(p)) !== md5(buf)).map((p) => p[0]);
-  console.log(`\n变异 ${picked.length} 例：OK ${ok}，BAD ${bad}${baseRedCut ? `（其中 ${baseRedCut} 例 BASELINE-RED＝基线有红，说不出话）` : ''}${selEmpty ? `＋${selEmpty} 例 SELECT-EMPTY＝选跑集合被 argv 吞掉，本例不出结论` : ''}`);
+  console.log(`\n变异 ${picked.length} 例：OK ${ok}，SKIP ${skipped}，BAD ${bad}${baseRedCut ? `（其中 ${baseRedCut} 例 BASELINE-RED＝基线有红，说不出话）` : ''}${selEmpty ? `＋${selEmpty} 例 SELECT-EMPTY＝选跑集合被 argv 吞掉，本例不出结论` : ''}`);
   console.log(mism.length ? `🔴 还原失败：${mism.join(' , ')} —— 立即从 _tmp/mutant-bak-* 恢复再查` : '还原对账：全部触碰文件逐字节一致（md5）');
   process.exit(bad || mism.length ? 1 : 0);
 }

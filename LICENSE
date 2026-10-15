@@ -28,3 +28,24 @@ Third-party components:
   engine; used unmodified as a separate dependency).
 - pdf-lib, @pdf-lib/fontkit — MIT.
 - LibreOffice itself — MPL-2.0, copyright The Document Foundation.
+
+---
+
+Third-party components (continued — transitive and system dependencies):
+
+- Transitive npm dependencies (via @deepseek-ai/libreoffice-kit@0.1.5, MPL-2.0;
+  licenses as published upstream): fflate@0.8.2 (MIT), fontkit@2.0.4 (MIT),
+  koffi@3.1.1 (MIT), saxes@6.0.0 (ISC). Note: fflate@0.8.2 carries
+  GHSA-px8p-9vwx-vf98 — severity moderate as measured by `npm audit` in this
+  tree (the upstream advisory page carries its own rating, see
+  https://github.com/advisories/GHSA-px8p-9vwx-vf98); fix 0.8.3 exists upstream
+  but is not taken via kit@0.1.5, so inside this dependency closure there is
+  "no fix available" — see README "已知依赖风险".
+- OfficeCLI (officecli-win-x64.exe) — upstream iOfficeAI/OfficeCLI, Apache-2.0.
+  NOT shipped with this repo and NOT an npm dependency; operators provide
+  their own binary and point DOCKIT_OFFICECLI at it. Pinned lineage v1.0.153–
+  v1.0.157 is recorded in docs/adr/ADR-002 (machine-specific认领; verify the
+  Release's SHA256SUMS yourself before use).
+- System tools (not shipped; detected by `doctor`, missing = WARN not FAIL):
+  Tesseract incl. chi_sim language data, Poppler (pdftotext/pdfimages/pdftoppm),
+  Pandoc. Their licenses belong to their own upstreams.

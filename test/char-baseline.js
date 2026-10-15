@@ -11,10 +11,8 @@
 //   check 与 selftest 都不会红——挪动不产生基线外语料，这是设计语义；要审"哪处文本该有哪几个字"属内容审校，不属这台尺。
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { spawnSync: cpSpawnSync } = require('node:child_process');
-// spawn 统一包装（v2.2.3，与 dockit.js 同款）：stdin 钉 'ignore'——本会话宿主里缺省 stdio 的 spawnSync
-// 稳定 EBUSY（详见 dockit.js 工具函数区注释）；台子要问 git 要版本号，不钉这一下就拿不到。
+// Keep child-process calls on the same stdio contract as the other test hosts.
 const SPAWN_STDIO_DEFAULT = ['ignore', 'pipe', 'pipe'];
 function spawnSync(exe, args, opts) {
   const o = Object.assign({}, opts || {});
@@ -74,9 +72,9 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
     // 首次创建 ≠ 重写：闸门靠 consent 的是"把漂移的基线覆盖掉"这个动作（那等于为了让台子绿而扩集合）。
     // 基线不存在时把它建起来是本工具的交付内容本身，所以 init 只在**没有基线文件**时可用，且写完就拒绝再跑。
     if (b) { out({ ok: false, op: 'init', refused: true, why: '基线已在位（' + BASELINE + '，' + b.meta.codepointCount + ' 个码点）；要重写只能走 save 且需 DOCKIT_BASELINE_CONSENT=1' }); process.exit(1); }
-    const data = { 生成: new Date().toISOString(), 工具: 'test/char-baseline.js init（仅首次创建；重写必须走 save + 机主同意）', 来源提交: headSha(), 文件数: Object.keys(per).length, 文件清单: Object.keys(per).sort(), codepointCount: all.size, codepoints: [...all].sort((x, y) => x - y) };
+    const data = { 生成: new Date().toISOString(), 工具: 'test/char-baseline.js init（仅首次创建；重写必须走 save + 同意）', 基线来源: '当前工作树', 文件数: Object.keys(per).length, 文件清单: Object.keys(per).sort(), codepointCount: all.size, codepoints: [...all].sort((x, y) => x - y) };
     fs.writeFileSync(BASELINE, JSON.stringify(data, null, 0) + '\n');
-    out({ ok: true, op: 'init', 文件数: data.文件数, codepointCount: all.size, 基线字节: fs.statSync(BASELINE).size, 来源提交: data.来源提交 });
+    out({ ok: true, op: 'init', 文件数: data.文件数, codepointCount: all.size, 基线字节: fs.statSync(BASELINE).size, 基线来源: data.基线来源 });
     process.exit(0);
   }
   if (mode === 'save') {
@@ -84,7 +82,7 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
       out({ ok: false, op: 'save', refused: true, why: '重写基线要机主同意（与字体基线同一条口径）：设 DOCKIT_BASELINE_CONSENT=1 才动', 现有基线: b ? b.meta.codepointCount : 0, 本次实算: all.size });
       process.exit(1);
     }
-    const data = { 生成: new Date().toISOString(), 工具: 'test/char-baseline.js save（需 DOCKIT_BASELINE_CONSENT=1）', 来源提交: headSha(), 文件数: Object.keys(per).length, 文件清单: Object.keys(per).sort(), codepointCount: all.size, codepoints: [...all].sort((x, y) => x - y) };
+    const data = { 生成: new Date().toISOString(), 工具: 'test/char-baseline.js save（需 DOCKIT_BASELINE_CONSENT=1）', 基线来源: '当前工作树', 文件数: Object.keys(per).length, 文件清单: Object.keys(per).sort(), codepointCount: all.size, codepoints: [...all].sort((x, y) => x - y) };
     fs.writeFileSync(BASELINE, JSON.stringify(data, null, 0) + '\n');
     out({ ok: true, op: 'save', 文件数: data.文件数, codepointCount: all.size, 基线字节: fs.statSync(BASELINE).size });
     process.exit(0);
@@ -111,7 +109,7 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
   const strict = argv.includes('--strict');
   out({
     ok: strict ? extra.length === 0 : true, op: 'check', strict,
-    基线码点数: bUse.set.size, 实算码点数: all.size, 基线生成: bUse.meta.生成, 基线来源提交: bUse.meta.来源提交,
+    基线码点数: bUse.set.size, 实算码点数: all.size, 基线生成: bUse.meta.生成, 基线来源: bUse.meta.基线来源 || '未记录',
     对照基线: atApplied || BASELINE,
     新增码点数: extra.length, 新增码点: extra.slice(0, 60).map((cp) => 'U+' + cp.toString(16) + '(' + String.fromCodePoint(cp) + ')'),
     消失码点数: gone.length,
@@ -159,10 +157,6 @@ if (mode === 'explain') {
   for (const [rel, list] of Object.entries(scan().per)) if (list.includes(cp)) where.push(rel);
   out({ ok: true, op: 'explain', char: ch, codepoint: 'U+' + cp.toString(16), 在基线内: !!b && b.set.has(cp), 出现的文件: where });
   process.exit(0);
-}
-
-function headSha() {
-  try { const r = spawnSync('git', ['-C', ROOT, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout).trim() : 'no-git'; } catch { return 'no-git'; }
 }
 
 out({ ok: false, op: mode || 'none', why: '未知用法：可用 check [--strict] | selftest | explain <字> | save（save 需 DOCKIT_BASELINE_CONSENT=1）' });

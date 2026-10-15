@@ -1,6 +1,6 @@
 {
- "generated": "2026-10-15T10:45:52.896Z",
- "source": "公开树（agent-doc-ops-oss，v3.0.1 开源化轮）kit 缺失模拟态 selftest 实测导出；剔除依赖覆盖率闸自身与 AUD-1 第四臂哨兵；内账文档不入公开面后 SKIP 判据 60→72",
+ "generated": "2026-10-15T14:15:38.454Z",
+ "source": "DOCKIT_KIT_CLI 指不存在路径的模拟态 selftest；剔除依赖覆盖率闸自身与 AUD-1 第四臂哨兵（设施自身不递归）",
  "count": 72,
  "names": [
   "batch 批量转换：清单计数、产物与原件零改动",

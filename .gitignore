@@ -12,3 +12,9 @@ shots/
 data/
 .env
 *.map.txt
+审查材料包*.md
+.cursor-skills-bak/
+_sandbox/
+bin/
+evidence/
+*.old
