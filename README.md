@@ -1,6 +1,64 @@
-# Agent文档操作（dockit）
+# Agent文档操作（dockit，开源版）v3.2.0
 
-本机通用文档处理装置：把 [`@deepseek-ai/libreoffice-kit`](https://github.com/deepseek-ai/dsh-libreoffice-kit)（npm 包名 `libreoffice-kit`，仓库目录名带 `dsh-` 前缀；DeepSeek 开源，MPL-2.0，预编译 LibreOffice 引擎）包成**绝对路径 + 一条命令 + 一份 JSON**。任何能运行 Node 命令的 Agent 都可以按 CLI 契约集成；随仓技能安装器探测 Codex、Claude、DeepSeek Harness、OpenCode 与通用 Agent 目录，但目前仅 Codex 安装与调用经过实测，其余平台尚未逐一验证。装置提供转换、渲染、重算、体检、元数据清理（OOXML/ODF/PDF）、媒体抽取、批量处理、PDF 拼拆、表单填写、字体缺字与外发风险检查等能力。
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](#许可证)
+[![Platform](https://img.shields.io/static/v1?label=platform&message=Windows%20x64&color=blue)](#安装与复现)
+[![Runtime](https://img.shields.io/static/v1?label=runtime&message=Node%20%3E%3D22.19&color=blue)](#安装与复现)
+[![selftest](https://img.shields.io/static/v1?label=selftest&message=164%20checks&color=informational)](#验证)
+
+**绝对路径 + 一条命令 + 一份 JSON**：把 [`@deepseek-ai/libreoffice-kit`](https://github.com/deepseek-ai/dsh-libreoffice-kit)（npm 包名 `libreoffice-kit`，仓库目录名带 `dsh-` 前缀；DeepSeek 开源，MPL-2.0，预编译 LibreOffice 引擎）包成本机任何 agent 都能一条命令调用的文档操作装置（转换/渲染/重算/体检/清洗/抽取/拼拆/填表）。输入只读、产物新建、永不覆盖，交付前自带字体与元数据两类证据。上面的 badge 是文档图片，不是待装的包：`npm install` 只装三个依赖，其余按 `doctor` 指路自备。
+
+> 首次使用？先看[一行调用](#一行调用)：任何能跑 Node 命令的 agent 都按同一契约集成；失败只认 `code`，不认退出码；要哪条命令的开关全表，跑 `help <命令>`。
+
+> 🇬🇧 English edition: [README.en.md](README.en.md)
+
+## 目录
+
+- [亮点](#亮点)
+- [为什么这样设计](#为什么这样设计)
+- [一次调用走什么链路](#一次调用走什么链路)
+- [一行调用](#一行调用)
+- [命令](#命令)
+- [成本口径](#成本口径)
+- [常用三条路](#常用三条路)
+- [一条命令装进 agent 技能目录](#一条命令装进-agent-技能目录)
+- [一条命令启动安装流程](#一条命令启动安装流程)
+- [字体装载器](#字体装载器)
+- [运行边界](#运行边界)
+- [验证](#验证)
+- [安装与复现](#安装与复现)
+- [自测](#自测)
+- [目录结构](#目录结构)
+- [许可证](#许可证)
+
+## 亮点
+
+|  | 一句话 | 去哪看 |
+|---|---|---|
+| **输入只读，永不覆盖** | 原件前后各测一次 sha256，不一致立刻 `failed`；输出撞车直接拒，半成品不落地 | [运行边界](#运行边界) |
+| **不宣称，只证明** | 写完装置自己重新解包/回读对账；后端的 `success` 不算结论（数得出才算数） | [运行边界](#运行边界) |
+| **真涂黑，不是盖黑框** | `redact` 删内容流文本算子＋画框＋产物再抽文本层，needle 残留即 `failed` | [命令](#命令) |
+| **脱敏是形状，不是口号** | 体检只给字段名+长度；正文/作者串/链接目标不回显；诊断输出占位化 | [运行边界](#运行边界) |
+| **数字靠机器记** | 判据条数、变异例数、入口数全写成机器形状由判据现算，漂移就红 | [验证](#验证) |
+| **缺件不硬撑** | 引擎/后端/语言包不在位回 `unavailable`＋指路，判据逐条 SKIP 并点名，不冒充通过 | [安装与复现](#安装与复现) |
+
+## 为什么这样设计
+
+- **调用方不读源码。** agent 按"绝对路径＋一条命令＋一份 JSON"集成：命令面、开关含义、失败码全部由 `help` 现查，README 里不抄第二份会漂的副本。
+- **"成功"必须自证。** 转换看回读、涂黑看再抽字、瘦身看页数＋逐字相等——"后端退码 0"永远不是结论，装置自己的回读才是。
+- **装置不替调用方保管风险。** 体积闸、永不覆盖、加密件前置拒、扫描件指路 OCR：做不到的面直接拒，不给"好像成功了"的形状。
+
+## 一次调用走什么链路
+
+```mermaid
+flowchart LR
+  A["调用方"] --> B["一条命令（绝对路径 + 参数）"]
+  B --> C["执行（kit 引擎 / 原生 CLI / 纯 JS，互不串味）"]
+  C --> D["装置自己回读对账（解包数数 / 再抽字 / 哈希比）"]
+  D --> E["一行 JSON 回执（ok + code + next）"]
+  E -. "失败即 verdict" .-> A
+```
+
+拒收也是一种 verdict：前置闸（体积/覆盖/加密/格式）先于任何解包与写盘触发，不落半成品。
 
 版本 v3.2.0 ｜ 权威文档：本 README（命令面总表）+ `docs/adr/`（关键设计决策）。用法纪律：输入文件只读、产物默认落 `_out/`（`DOCKIT_OUT_DIR` 测试重定向／`_audit` 台账／gc 隔离区除外）、永不覆盖已有文件；临时文件见运行边界（`_tmp/`＋系统 Temp ASCII 中转，用完即删）。
 
@@ -179,3 +237,39 @@ node dockit.js selftest
 **已知依赖风险（如实披露）**：kit 0.1.5 锁定的 `fflate@0.8.2` 有一个中危漏洞（`unzipSync` 解析畸形 ZIP64 时可进入无限循环，GHSA-px8p-9vwx-vf98），修复版 0.8.3 已发布但 kit 侧未跟进。**上游引擎路径仍受影响**：kit 的 worker 用 fflate 的 `unzipSync` 解析输入文件（`lib/worker.js` L288），所以**经 kit 的 OOXML/ODF 解包链路的命令**（`to`／`pages` 等吃 OOXML/ODF 输入时）在吃一个恶意构造的 zip64 畸形文档时可能挂死；PDF 输入与 OLE 老族不进 `unzipSync` 路径，不在此点。缓解：① 装置命令面的解包路线（`inspect`/`check`/`scrub`/`dump`/`redline`/`sheetop` 等 21 族）用自研 ZIP 读取器（逐条 CRC 实算、大小写精确），不走 fflate，该面不受影响；② kit 子进程调用全部带 `--timeout-ms`（默认 120000ms）——🔴 **防护在 kit CLI 内部的 worker 超时机制**（`runKit` 父进程的 `spawnSync` 本身没有操作系统级超时参数在起作用，挂死由 kit worker 自身超时终止并回 `timeout` 失败码）；③ 处理**来源不可信的文档**时优先用装置自己的解包命令面（不起引擎的那 21 族），升 kit 属机主级版本决策。
 
 Node 需 ≥ 22.19.0（本机 v24.19.0 实测）。kit 与引擎包版本独立编号，本装置钉 `0.1.5`；npm 侧依赖共三件：`@deepseek-ai/libreoffice-kit@0.1.5`＋`pdf-lib@1.17.1`＋`@pdf-lib/fontkit@1.1.1`。
+
+## 自测
+
+```bat
+node dockit.js selftest              :: 内置判据，一行 JSON 报 passed|failed|skipped|total
+node dockit.js selftest --keep        :: 保留自检目录以便复盘
+node test\mutant.js --public          :: 公开变异子集（判据有没有牙，由它回答）
+```
+
+`selftest` 是改动的仲裁：判据条数、变异例数、入口数全写成机器形状，漂移就红。SKIP 只用于明确的可选环境前置缺失（外部后端、公开仓未携带的内部文档、未配置的真实样本），且必须逐条点名——"跳过"不是"通过"。判据有没有牙由 `test/mutant.js` 回答，不由 selftest 自己回答。
+
+## 目录结构
+
+```
+dockit.js                  # 装置本体（命令面＋判据）
+dockit.bat                 # 同一件事，少敲 node 与路径
+README.md                  # 本文档（命令面总表）
+README.en.md               # 英文版（同一命令面）
+CHANGELOG.md               # 发布历史
+LICENSE                    # MIT＋第三方段
+CONTRIBUTING.md            # 改代码前读：跑序、基线、身份口径
+SECURITY.md                # 能做什么、审计面、怎么报告
+setup.js                   # 一条命令：装依赖＋装技能卡＋doctor 验收
+install-skill.js           # 只装技能卡（原子安装，先备份再覆盖）
+install-fonts.js           # 字体装载器（需机主侧备份＋管理员权限）
+install-system-deps.js     # 系统依赖 assisted 安装（默认只探测，显式 opt-in 才装）
+package.json               # 依赖三件＋engines/os 声明（不发 npm）
+test/                      # 判据与台子（selftest 内嵌 dockit.js；变异台/基线/注册表另列）
+skills/agent-doc-ops/      # 随仓技能包（安装器把它装进各 agent 目录）
+docs/adr/                  # 关键设计决策（ADR-001 外部依赖／ADR-002 写后端）
+_out/ _tmp/ _probe/        # 运行时目录（gitignored）：产物／测试产物／探针
+```
+
+## 许可证
+
+MIT — 见 [LICENSE](LICENSE)（含第三方段：kit MPL-2.0、pdf-lib 系 MIT、OfficeCLI Apache-2.0（自备）、系统工具各自归属）。

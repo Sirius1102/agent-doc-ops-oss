@@ -27,8 +27,10 @@ node test\mutant.js --public
 （Windows PowerShell 若因执行策略拦 `npm`，改直调 `node test/installers-args.js`，同一件事。）
 
 - `selftest` 必须全绿（公开树允许设计内 SKIP，见 README 说明）。
+- PR 请贴 selftest 尾行（passed/failed/skipped 三数），并逐条回答 PR 模板里的清单。
 - 加变异例必须同步改 `README.md` 里的 `变异例数=<N>` 与编号区间（`selftest` 的文档卫生判据会机器核对，漂移就红）。
 - 升版本时同步改 `dockit.js` 的 `VERSION`、头注版本行、`package.json`、`package-lock.json`、`README.md` 版本行。
+- 改命令表或加结构时，中英两版 README 同步改（本轮无机器 gate，提交前人工对一遍；英文版见 `README.en.md`）。
 
 ## 基线更新
 
