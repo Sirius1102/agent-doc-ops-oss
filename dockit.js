@@ -7056,14 +7056,23 @@ async function cmdSelftest(args) {
     const d0 = DOC(null);
     if (!d0.j) return '现态 doctor 没出 JSON（红因不许不带因）：' + String(d0.p.stdout || d0.p.stderr || '(空)').replace(/\s+/g, ' ').slice(0, 140);
     const row0 = lineOf(d0.j);
-    if (missReal.length === 0) {
-      // 公开树版（v3.0.1 开源化轮）：清单的「标定机器」已泛化为 <MACHINE-A> 占位 ⇒ 本机名永远对不上 ⇒
-      // 装置按设计降 WARN（"非标定机器只 WARN 不打穿首跑全绿"是哨兵自己的口径）。期望随之重锚：
-      // 在标定机器字段为占位符时，正确结论是 WARN 而非 PASS；"全在位且 PASS"只在清单标定于本机时才成立。
-      const placeholder = man['标定机器'] && /^<.+>$/.test(man['标定机器']);
-      if (placeholder) {
-        if (!/^WARN /.test(row0)) bad.push(`清单标定机器是占位符（${man['标定机器']}）、本机永远对不上 ⇒ 应降 WARN，实报：${row0.slice(0, 140)}`);
-        // WARN 分支不带"已核 N"字样（那是 PASS 分支的自报形状）；全量核验由 ②③ 独立造态覆盖。
+    // 公开树版（v3.0.1 开源化轮）：清单的「标定机器」已泛化为 <MACHINE-A> 占位 ⇒ 本机名永远对不上 ⇒
+    // 装置按设计降 WARN（"非标定机器只 WARN 不打穿首跑全绿"是哨兵自己的口径）。占位清单不绑定任何机器：
+    // 在位缺件都只 WARN（无字体的 CI runner 必走这支）；在位与哈希的硬断言由下面的合成标定态覆盖。
+    // WARN 分支不带"已核 N"字样（那是 PASS 分支的自报形状）。
+    const placeholder = man['标定机器'] && /^<.+>$/.test(man['标定机器']);
+    if (placeholder) {
+      if (!/^WARN /.test(row0)) bad.push(`清单标定机器是占位符（${man['标定机器']}）、本机永远对不上 ⇒ 应降 WARN，实报：${row0.slice(0, 140)}`);
+    } else if (missReal.length === 0) {
+      if (!/^PASS /.test(row0)) bad.push(`清单说全在位、装置却报非 PASS：${row0.slice(0, 140)}`);
+      if (!row0.includes('已核 ' + man.files.length)) bad.push(`覆盖面自报的"已核条目数"不等于清单件数 ${man.files.length}（只核少数几个就是 2026-10-09 那次"丢 6 报 1"的形状）：${row0.slice(0, 200)}`);
+    } else {
+      if (!/^FAIL /.test(row0)) bad.push(`实算缺 ${missReal.length} 件而装置不判红：${row0.slice(0, 160)}`);
+      if (!row0.includes('缺 ' + missReal.length + '/' + man.files.length)) bad.push(`FAIL 行没按实算报缺件数（应含"缺 ${missReal.length}/${man.files.length}"）：${row0.slice(0, 200)}`);
+      if (!row0.includes('已核 ' + man.files.length)) bad.push('FAIL 行的"已核条目数"也不许少报：' + row0.slice(0, 200));
+    }
+    // 合成标定机器态：与占位与否、在位缺件与否无关，独立覆盖在位与哈希的硬断言。
+    {
       const calibratedName = 'MUTANT-CALIBRATION';
       const calibratedPath = path.join(S, 'font-manifest-calibrated.json');
       fs.writeFileSync(calibratedPath, JSON.stringify(Object.assign({}, man, { 标定机器: calibratedName })), 'utf8');
@@ -7076,14 +7085,6 @@ async function cmdSelftest(args) {
         if (!rowc.includes('已核 ' + man.files.length)) bad.push(`合成标定机器态的已核数不等于清单件数 ${man.files.length}：${rowc.slice(0, 180)}`);
         if (missReal.length && !rowc.includes('缺 ' + missReal.length + '/' + man.files.length)) bad.push(`合成标定机器态缺件数不等于独立实算 ${missReal.length}/${man.files.length}：${rowc.slice(0, 180)}`);
       }
-      } else {
-        if (!/^PASS /.test(row0)) bad.push(`清单说全在位、装置却报非 PASS：${row0.slice(0, 140)}`);
-        if (!row0.includes('已核 ' + man.files.length)) bad.push(`覆盖面自报的"已核条目数"不等于清单件数 ${man.files.length}（只核少数几个就是 2026-10-09 那次"丢 6 报 1"的形状）：${row0.slice(0, 200)}`);
-      }
-    } else {
-      if (!/^FAIL /.test(row0)) bad.push(`实算缺 ${missReal.length} 件而装置不判红：${row0.slice(0, 160)}`);
-      if (!row0.includes('缺 ' + missReal.length + '/' + man.files.length)) bad.push(`FAIL 行没按实算报缺件数（应含"缺 ${missReal.length}/${man.files.length}"）：${row0.slice(0, 200)}`);
-      if (!row0.includes('已核 ' + man.files.length)) bad.push('FAIL 行的"已核条目数"也不许少报：' + row0.slice(0, 200));
     }
     // ② 清单不在位：必须 WARN、不回显解析路径，且不许把整轮 doctor 判红成"崩"
     const d1 = DOC({ DOCKIT_FONT_MANIFEST: path.join(TMP_DIR, 'no-such-font-manifest.json') });
@@ -9096,14 +9097,16 @@ const DEP_SKIP_REGISTRY = [
     if (!r2.j || r2.j.code !== 'invalid-output') bad.push('非 PDF 输入跑 pages（无 to）应 invalid-output：' + JSON.stringify(r2.j && { code: r2.j.code }));
     const r4 = cli(['pipeline', probeDoc, 'pages,to']);
     if (!r4.j || r4.j.code !== 'invalid-output') bad.push('to 不在首位应 invalid-output：' + JSON.stringify(r4.j && { code: r4.j.code }));
+    // r6 旧名 to-pages＝to+pages（只要 kit，不要 poppler）；只有 r5 的 pdftext 步要 pdftotext。
+    const r6 = cli(['pipeline', probeDoc, 'to-pages']);
+    if (!r6.j || r6.j.ok !== true) bad.push('旧名 to-pages 应仍可用：' + String(r6.p.stdout || '').slice(0, 120));
+    if (!popplerTool('pdftotext').present) return bad.length ? bad.join(' | ') : 'skip（这台机器没有 pdftotext：to,pdftext 正向面跑不了，纯校验与旧名面已核）';
     const r5 = cli(['pipeline', probeDoc, 'to,pdftext']);
     if (!r5.j || r5.j.ok !== true) { bad.push('to,pdftext 正向失败：' + String(r5.p.stdout || '').slice(0, 180)); return bad.join(' | '); }
     const stNames = (r5.j.steps || []).map((s) => s.step).join(',');
     if (stNames !== 'to,pdftext') bad.push(`steps 序列应为 to,pdftext，实为 ${stNames}`);
     const pdftextStep = (r5.j.steps || []).find((s) => s.step === 'pdftext');
     if (!pdftextStep || !pdftextStep.file || !fs.existsSync(pdftextStep.file)) bad.push('pdftext 步应落 txt 产物并在 steps 里自报路径');
-    const r6 = cli(['pipeline', probeDoc, 'to-pages']);
-    if (!r6.j || r6.j.ok !== true) bad.push('旧名 to-pages 应仍可用：' + String(r6.p.stdout || '').slice(0, 120));
     return bad.length ? bad.join(' | ') : true;
   }, {needs:'kit'});
   await ta('media 抽 PDF 内嵌图：pdfimages 张数/类型/sha 对账、中文路径落盘、原件零改', async () => {
@@ -9476,17 +9479,21 @@ const DEP_SKIP_REGISTRY = [
     const w = (name, obj) => { const p = path.join(D, name); fs.writeFileSync(p, JSON.stringify(obj)); return p; };
     const run = (file) => { const p = spawnSync(process.execPath, [__filename, 'pipeline', src, '--dag', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); let j = null; try { j = JSON.parse(String(p.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { } return { p, j }; };
     const bad = [];
-    const ok = run(w('ok.json', { nodes: [{ id: 'pdf', step: 'to' }, { id: 'png', step: 'pages', needs: ['pdf'] }, { id: 'txt', step: 'pdftext', needs: ['pdf'] }, { id: 'ocr', step: 'ocr', needs: ['txt'], when: { step: 'png', field: 'pageCount', op: 'lte', value: 0 } }] }));
-    if (!ok.j || ok.j.ok !== true) return 'DAG 正向跑不通：' + JSON.stringify(ok.j && { code: ok.j.code, error: String(ok.j.error).slice(0, 150), failedStep: ok.j.failedStep });
-    if (ok.j.mode !== 'dag') bad.push('没自报 mode=dag');
-    if (ok.j.order.join('>') !== 'pdf>png>txt>ocr') bad.push('拓扑序不对：' + ok.j.order.join('>'));
-    const st = Object.fromEntries((ok.j.nodes || []).map((n) => [n.id, n.status]));
-    if (st.ocr !== 'skipped') bad.push('when 不成立（pageCount lte 0 为假）的节点没被跳过，实为 ' + st.ocr);
-    if (st.pdf !== 'ok' || st.png !== 'ok' || st.txt !== 'ok') bad.push('该跑的节点没跑成：' + JSON.stringify(st));
-    if (ok.j.skippedCount !== 1) bad.push('skippedCount 应为 1，实为 ' + ok.j.skippedCount);
-    const inh = run(w('inherit.json', { nodes: [{ id: 'pdf', step: 'to' }, { id: 'x', step: 'ocr', needs: ['y'] }, { id: 'y', step: 'pdftext', needs: ['pdf'] }] }));
-    if (!inh.j || inh.j.ok !== true) bad.push('依赖链跑不通：' + JSON.stringify(inh.j && { code: inh.j.code, error: String(inh.j.error).slice(0, 120) }));
-    else if ((inh.j.nodes || []).some((n) => n.status === 'skipped')) bad.push('上游 ok 却把下游跳过了（skip 传染写错方向）：' + JSON.stringify(inh.j.nodes));
+    // ok.json 与 inherit.json 含真跑的 pdftext 步（要 pdftotext）；其余是纯校验面，缺 poppler 照跑。
+    const noPdftotext = !popplerTool('pdftotext').present;
+    if (!noPdftotext) {
+      const ok = run(w('ok.json', { nodes: [{ id: 'pdf', step: 'to' }, { id: 'png', step: 'pages', needs: ['pdf'] }, { id: 'txt', step: 'pdftext', needs: ['pdf'] }, { id: 'ocr', step: 'ocr', needs: ['txt'], when: { step: 'png', field: 'pageCount', op: 'lte', value: 0 } }] }));
+      if (!ok.j || ok.j.ok !== true) return 'DAG 正向跑不通：' + JSON.stringify(ok.j && { code: ok.j.code, error: String(ok.j.error).slice(0, 150), failedStep: ok.j.failedStep });
+      if (ok.j.mode !== 'dag') bad.push('没自报 mode=dag');
+      if (ok.j.order.join('>') !== 'pdf>png>txt>ocr') bad.push('拓扑序不对：' + ok.j.order.join('>'));
+      const st = Object.fromEntries((ok.j.nodes || []).map((n) => [n.id, n.status]));
+      if (st.ocr !== 'skipped') bad.push('when 不成立（pageCount lte 0 为假）的节点没被跳过，实为 ' + st.ocr);
+      if (st.pdf !== 'ok' || st.png !== 'ok' || st.txt !== 'ok') bad.push('该跑的节点没跑成：' + JSON.stringify(st));
+      if (ok.j.skippedCount !== 1) bad.push('skippedCount 应为 1，实为 ' + ok.j.skippedCount);
+      const inh = run(w('inherit.json', { nodes: [{ id: 'pdf', step: 'to' }, { id: 'x', step: 'ocr', needs: ['y'] }, { id: 'y', step: 'pdftext', needs: ['pdf'] }] }));
+      if (!inh.j || inh.j.ok !== true) bad.push('依赖链跑不通：' + JSON.stringify(inh.j && { code: inh.j.code, error: String(inh.j.error).slice(0, 120) }));
+      else if ((inh.j.nodes || []).some((n) => n.status === 'skipped')) bad.push('上游 ok 却把下游跳过了（skip 传染写错方向）：' + JSON.stringify(inh.j.nodes));
+    }
     const cyc = run(w('cyc.json', { nodes: [{ id: 'a', step: 'pdftext', needs: ['b'] }, { id: 'b', step: 'to', needs: ['a'] }] }));
     if (!cyc.j || cyc.j.ok !== false || cyc.j.code !== 'invalid-output' || !/环/.test(String(cyc.j.error))) bad.push('成环没被拒：' + JSON.stringify(cyc.j && { code: cyc.j.code, error: String(cyc.j.error).slice(0, 120) }));
     const ghost = run(w('ghost.json', { nodes: [{ id: 'a', step: 'pdftext', needs: ['nope'] }] }));
@@ -9500,6 +9507,7 @@ const DEP_SKIP_REGISTRY = [
     const noflow = spawnSync(process.execPath, [__filename, 'pipeline', src, '--dag', w('only-dag.json', { nodes: [{ id: 'a', step: 'to' }] })], { encoding: 'utf8' });
     let nf = null; try { nf = JSON.parse(String(noflow.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { }
     if (!nf || nf.ok !== true) bad.push('只给 --dag 不给 flow 时必须能跑（否则新面被旧前置卡死）：' + JSON.stringify(nf && { code: nf.code, error: String(nf.error).slice(0, 100) }));
+    if (noPdftotext) return bad.length ? bad.join(' | ') : 'skip（这台机器没有 pdftotext：含 pdftext 步的正向流跑不了，纯校验面已核）';
     return bad.length ? bad.slice(0, 7).join(' | ') : true;
   }, { needs: 'kit' });
 
@@ -9812,6 +9820,7 @@ const DEP_SKIP_REGISTRY = [
     ]));
     const cv = runKit(['convert', '--input', srcDoc, '--output', `${S}/tb.pdf`, '--timeout-ms', '90000']);
     if (!cv.ok) return `kit 转换没成（拿不到带网格的 PDF 样本）：${cv.code} ${String(cv.error).slice(0, 90)}`;
+    if (!popplerTool('pdftotext').present) return 'skip（这台机器没有 pdftotext：词框入格面跑不了，kit 转网格 PDF 面已核）';
     const T = (f, extra) => { const p = spawnSync(process.execPath, [__filename, 'tables', f, ...(extra || [])], { encoding: 'utf8' }); let j = null; try { j = JSON.parse(String(p.stdout).split(/\r?\n/).filter(Boolean).pop()); } catch { } return { p, j }; };
     const bad = [];
     const a = T(`${S}/tb.pdf`);
