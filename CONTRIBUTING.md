@@ -37,4 +37,6 @@ node test\mutant.js --public
 - `node test\char-baseline.js save` 需要机主同意（`DOCKIT_BASELINE_CONSENT=1`），并在提交说明里写清新增码点的来源。
 - 作者与组织名（Sirius／Sirius1102）为机主公开身份，刻意保留；不要当泄漏清理。
 - CI 只跑子集（见 `.github/workflows/ci.yml`）：无字体基线、无写后端现场面、无真机样本——全量按上序本地跑。
+- CI 上"说不出结论"的变异例不算坏，但也不许冒充 OK：目标判据在基线就是 SKIP ⇒ `UNAVAILABLE-SKIP`；判据在本机走**诚实降级分支**（缺 tesseract 时 pipeline 的 ocr 子断言不跑、缺单体 CJK 字体时 pdfform 只断言回 unavailable）以致变异打不出红 ⇒ 由该例自己声明的 `needsCap` 报 `UNAVAILABLE-CAPABILITY`。两类都计进 `SKIP` 列，绝不进 `BAD`、也绝不进 `OK`。
+- 变异锚点与**行尾符无关**：CI 的 Windows checkout 是 CRLF，多行锚点写的是 `\n`——台子统一按 LF 匹配并注入（收尾仍写回原始字节），新加多行锚点不必再操心这件事。
 - 🔴 贴输出到公开 issue 前先删路径行：`inspect`／`to` 等回执会原样回显输入/产物路径（按需回显，不做占位化）；诊断类输出已占位化，可直接贴。

@@ -253,7 +253,10 @@ const MUTANTS = [
   // ---- v1.7.2 五例：替身字体哨兵三条覆盖面（M122–M124，各打一层）＋ selftest 两处异步尾巴形状（M125 自建父目录／M126 临时根带进程号）。期望值 119→124（**改的是期望值不是松紧**——没有一条既有判据被删或放宽）。
   { id: 'M122', file: D, only: 'substitute-fonts 哨兵', name: '把"按清单核全量"偷偷退回"只核 7 个固定名"；合成标定机器态必须发现已核数偏离清单', find: '    for (const x of fm.files) {', to: '    for (const x of SENTINELS.map((n) => ({ name: n }))) { // M122：退回只核固定名', mustRed: ['substitute-fonts 哨兵'], msg: ['已核数不等于清单件数'] },
   { id: 'M123', file: D, only: 'substitute-fonts 哨兵', name: '把"清单标定的机器不是本机"那支的 warn 位关掉——清单是机器事实，关掉后这一支渲染成**静默 PASS**（别处克隆会被说成"替身字体全在位"）。🔴 第一版这例是**假攻击**：它改 pass 位，而 push 渲染优先级是 WARN>PASS/FAIL，warn=true 时输出一个字节都没变——台子报"未变红"才暴露，故改打可观测的 warn 位；第二版我又把锚词写成"判红"方向的短语，被"红因缺失"当场抓出（红是对的红因是错的）', find: "'全在位'}`, true);", to: "'全在位'}`, false);", mustRed: ['substitute-fonts 哨兵'], msg: ['非标定机器必须'] },
-  { id: 'M124', file: D, only: 'substitute-fonts 哨兵', name: '清单不在位时把 warn 位关掉（→ 静默渲染成 PASS）——覆盖面缺口被"装作体检通过"掩盖，缺清单必须 WARN 并点名解析到的路径。同 M123 的教训：打 pass 位是假攻击，这里打 warn 位', find: " 在位`), absent.length === 0);", to: " 在位`), false);", mustRed: ['substitute-fonts 哨兵'], msg: ['清单缺失必须是'] },
+  // 🔴 CI 首绿轮换靶（2026-10-16）：旧锚串 ` 在位\`), absent.length === 0);` 已被「清单不可读分支恒 WARN
+  //    （无校准不判红）」那笔修复改掉（锚点成 0 命中＝ANCHOR-MISS，靠本机 UNAVAILABLE-SKIP 提前短路才没暴露）。
+  //    同一味攻击、不删只换靶：清单缺失分支的 warn 位现在硬写 true，改成 false 即"静默渲染成 PASS"。
+  { id: 'M124', file: D, only: 'substitute-fonts 哨兵', name: '清单不在位时把 warn 位关掉（→ 静默渲染成 PASS）——覆盖面缺口被"装作体检通过"掩盖，缺清单必须 WARN 并点名解析到的路径。同 M123 的教训：打 pass 位是假攻击，这里打 warn 位', find: " 在位`), true);", to: " 在位`), false);", mustRed: ['substitute-fonts 哨兵'], msg: ['清单缺失必须是'] },
   { id: 'M125', file: D, only: 'WP-A 存在性', name: '删掉惰性 ODT 夹具写入点的自建父目录——套件收尾后才首次访问 mk-odt 时会抛 ENOENT，被顶层兜成 die 信封把整轮 selftest 的 JSON 顶掉（覆盖率闸因此只看到 failed=undefined；2026-10-09 实犯）；静态形状判据必须点名', find: "    fs.mkdirSync(path.dirname(p), { recursive: true });\n", to: '', mustRed: ['WP-A 存在性'], msg: ['自建父目录'] },
   { id: 'M126', file: D, only: 'WP-A 存在性', name: '把 selftest 临时根改回"只到秒"的命名——覆盖率闸 spawn 的缺失态子 selftest 与父进程同秒时会共用同一个 _tmp/selftest-<秒>，先收尾的一方把它删掉，另一方后半程判据成片 ENOENT（2026-10-09 实犯，子轮 failed=17、红因清一色同一个 S 路径）；命名形状判据必须点名', find: "  const S = ensureDir(TMP_DIR + '/selftest-' + stamp() + '-' + process.pid);", to: "  const S = ensureDir(TMP_DIR + '/selftest-' + stamp());", mustRed: ['WP-A 存在性'], msg: ['进程号'] },
   // ---- v1.8.0 五例：非对齐 OLE 副本对齐修复（机主 2026-10-10 批准）。各打一层：触发闸（M127）、对齐算术（M128）、
@@ -320,7 +323,7 @@ const MUTANTS = [
   // M168–M169 打 v2.2.0 pipeline（任务书-I 计划11）：跳过 to 的检测与 ocr 步触发。
   { id: 'M168', file: D, only: 'pipeline 串联', name: 'PDF 输入的跳过 to 检测被打飞（PDF 也强跑 to）', find: "function inputIsPdf(input) {\n  const fd = fs.openSync", to: "function inputIsPdf(input) {\n  return false; // M168：判位恒假（后面的读取变成不可达）\n  const fd = fs.openSync", mustRed: ['pipeline 串联'] },
   // M169（v2.2.0 立，v2.4.0 换靶）：pipeline 的 ocr 步不触发（被静默吞掉）——同味攻击，锚点随步序列重构从"flow 分支"换到"stepName 分支"。
-  { id: 'M169', file: D, only: 'pipeline 串联', name: 'to-pages-ocr 的 ocr 步不触发（被静默吞掉）', find: `} else if (stepName === 'ocr') {`, to: `} else if (false && stepName === 'ocr') {`, mustRed: ['pipeline 串联'] },
+  { id: 'M169', file: D, only: 'pipeline 串联', name: 'to-pages-ocr 的 ocr 步不触发（被静默吞掉）', find: `} else if (stepName === 'ocr') {`, to: `} else if (false && stepName === 'ocr') {`, mustRed: ['pipeline 串联'], needsCap: 'tesseract' },
   // M170–M171 给 media 超限 / split 封顶两条子层补独立变异（任务书-I 计划9①）。
   { id: 'M170', file: D, only: 'media PDF 拒绝面', name: 'media(PDF) 超 cap 落地前拒被打飞（超量也照抽）', find: `if (imgCount > cap) die('invalid-output',`, to: `if (false) die('invalid-output',`, mustRed: ['media PDF 拒绝面'] },
   { id: 'M171', file: D, only: 'split 拒绝面', name: 'split 封顶拒绝被打飞（超 100 件也照拆）', find: `if (ranges.length > SPLIT_MAX_OUTPUTS) die('invalid-output',`, to: `if (false) die('invalid-output',`, mustRed: ['split 拒绝面'] },
@@ -347,7 +350,7 @@ const MUTANTS = [
   // 期望值 177→187（**改的是期望值不是松紧**——没有一条既有判据被删或放宽）。各例 only 与 mustRed 严格对号。
   { id: 'M180', file: D, only: 'pdfform 拒绝面', name: '拆掉 pdfform 的 XFA 守卫（pdf-lib 一碰 getForm() 就把 XFA 静默剥掉——守卫必须在它之前；没了守卫，XFA 件会被先剥壳再当普通表单）', find: "if (af instanceof PDFDict && af.get(PDFName.of('XFA'))) die('unsupported-format'", to: "if (false && af instanceof PDFDict && af.get(PDFName.of('XFA'))) die('unsupported-format'", mustRed: ['pdfform 拒绝面'], msg: ['XFA 件应'] },
   { id: 'M181', file: D, only: 'pdfform 拒绝面', name: '拆掉 pdfform 的选项白名单（选项外值被静默放行或由库抛失败——必须从 invalid-output 漂走）', find: "if (!opts.includes(sv)) die('invalid-output'", to: "if (false && !opts.includes(sv)) die('invalid-output'", mustRed: ['pdfform 拒绝面'], msg: ['选项外值应'] },
-  { id: 'M182', file: D, only: 'pdfform 正向', name: '把 pdfform 的文本写入掏空（setText 不生效——装置自己的写后回读对账必须报回读不符，独立回读再抓一层）', find: "if (p.t === 'text') { p.f.setText(p.v); if (cjkFont && /[^\\x00-\\xFF]/.test(p.v)) p.f.updateAppearances(cjkFont); }", to: "if (p.t === 'text') { /* M182：写入掏空 */ }", mustRed: ['pdfform 正向'], msg: ['回读对账不符'] },
+  { id: 'M182', file: D, only: 'pdfform 正向', name: '把 pdfform 的文本写入掏空（setText 不生效——装置自己的写后回读对账必须报回读不符，独立回读再抓一层）', find: "if (p.t === 'text') { p.f.setText(p.v); if (cjkFont && /[^\\x00-\\xFF]/.test(p.v)) p.f.updateAppearances(cjkFont); }", to: "if (p.t === 'text') { /* M182：写入掏空 */ }", mustRed: ['pdfform 正向'], msg: ['回读对账不符'], needsCap: 'cjkFormFont' },
   { id: 'M183', file: D, only: 'scrub PDF 面', name: '拆掉 scrub(PDF) 的 XMP 双删块（catalog 引用＋context 对象都不删——XMP 原文整段留在产物里）', find: "const hadXmp = !!metaRef;\n  if (hadXmp) {", to: "const hadXmp = !!metaRef;\n  if (false && hadXmp) {", mustRed: ['scrub PDF 面'], msg: ['removedFields 缺 XMP:/Metadata'] },
   { id: 'M184', file: D, only: 'scrub PDF 面', name: '把 scrub(PDF) 的 /Info 目标键删除循环掏空（Info 六键全留）', find: "for (const k of PDF_META_TARGETS) { const key = PDFName.of(k);", to: "for (const k of []) { const key = PDFName.of(k);", mustRed: ['scrub PDF 面'], msg: ['removedFields 缺 Info:Title'] },
   { id: 'M185', file: D, only: 'scrub PDF 面', name: '拆掉 scrub(PDF) 的输出撞车拒绝（已存在照写——“永不覆盖”在 PDF 面失效）', find: "const output = positional[1] ? abs(positional[1]) : freePath(OUT_DIR, `${path.basename(input, '.' + extOf(input))}-scrubbed`, 'pdf');\n  if (positional[1] && fs.existsSync(output)) die('invalid-output',", to: "const output = positional[1] ? abs(positional[1]) : freePath(OUT_DIR, `${path.basename(input, '.' + extOf(input))}-scrubbed`, 'pdf');\n  if (false && positional[1] && fs.existsSync(output)) die('invalid-output',", mustRed: ['scrub PDF 面'], msg: ['撞车'] },
@@ -521,6 +524,27 @@ let baseSkipNames = [];
   }
 }
 const rows = []; let ok = 0, skipped = 0, bad = 0, baseRedCut = 0, selEmpty = 0;
+// ---- CI 首绿轮（2026-10-16）：例所需**能力**探针（UNAVAILABLE-CAPABILITY）。
+//      有的判据在本机缺某个可选前置时会走**诚实降级分支**并 PASS（不是 SKIP）：这时"目标判据没 SKIP"
+//      说明不了本机有那能力，变异也就打不出红——CI 实测两例（M169 无 tesseract ⇒ pipeline 的 ocr 子断言
+//      根本不跑；M182 无 pdfform 的单体 CJK 字体 ⇒ 判据只断言回 unavailable 就 PASS）。这类例声明
+//      needsCap，本机没这能力就报「说不出结论」，与 UNAVAILABLE-SKIP 同族：**不冒充 BAD，也不冒充 OK**。
+//      🔴 探针必须与判据**同源**：字体候选表从 dockit.js 现抽（抽不动就按"说不出结论"处理——宁可不结论，不冒充）。
+function dockitFontCandidates() {
+  const src = fs.readFileSync(path.join(ROOT, D), 'utf8');
+  const m = /const PDFFORM_FONT_CANDIDATES = \[([^\]]*)\]/.exec(src);
+  if (!m) return [];
+  try { return new Function('return [' + m[1] + ']')(); } catch { return []; }
+}
+const TESSERACT_EXE_FOR_CAP = () => (process.env.DOCKIT_TESSERACT || path.join(process.env.DOCKIT_TESSERACT_DIR || 'C:\\Program Files\\Tesseract-OCR', 'tesseract.exe'));
+const CAP_PROBES = {
+  tesseract: () => fs.existsSync(TESSERACT_EXE_FOR_CAP()),
+  cjkFormFont: () => dockitFontCandidates().some((p) => fs.existsSync(p)),
+};
+const CAP_WHY = {
+  tesseract: '本机无 tesseract：判据里的 ocr 子断言不跑（走可选分支），掏空 ocr 步的变异打不出红',
+  cjkFormFont: '本机没有 pdfform 的单体 CJK 字体（字体面缺件）：判据走诚实降级分支，掏空 setText 打不出红',
+};
 try {
   for (const m of picked) {
     const unavailable = !m.env ? m.mustRed.filter((n) => baseSkipNames.some((s) => s.includes(n))) : [];
@@ -529,9 +553,18 @@ try {
       rows.push({ id: m.id, name: m.name, verdict: `UNAVAILABLE-SKIP（基线 selftest 的目标判据为 SKIP：${unavailable.join(' / ')}）` });
       continue;
     }
+    if (m.needsCap) {
+      const probe = CAP_PROBES[m.needsCap];
+      if (!probe) { bad++; rows.push({ id: m.id, name: m.name, verdict: `CAP-UNKNOWN（台子没登记 needsCap="${m.needsCap}" 这个能力名——先修台子）` }); continue; }
+      if (!probe()) { skipped++; rows.push({ id: m.id, name: m.name, verdict: `UNAVAILABLE-CAPABILITY（${CAP_WHY[m.needsCap] || m.needsCap}）` }); continue; }
+    }
     const p = path.join(ROOT, m.file);
     const orig = touched.get(p);
-    const text = orig.toString('utf8');
+    // 🔴 CI 首绿轮：锚点必须与**行尾符无关**。CI 的 checkout 是 CRLF（Windows runner 的 core.autocrlf=true），
+    //    而多行锚点里写的是 \n —— 整条变异会静默变成 ANCHOR-MISS（CI 实测 20 例；本机工作树是 LF 所以全绿，
+    //    2026-10-16 用 CRLF 副本逐锚点复现，24 例丢锚与 CI 名单逐字对上）。这里统一按 LF 匹配与注入；
+    //    收尾仍写回**原始字节**（orig），md5 还原对账不受影响。
+    const text = orig.toString('utf8').replace(/\r\n/g, '\n');
     const hits = text.split(m.find).length - 1;
     if (hits === 0) { bad++; rows.push({ id: m.id, verdict: 'ANCHOR-MISS（变异没打进去，不算红）' }); continue; }
     if (hits > 1) { bad++; rows.push({ id: m.id, verdict: `ANCHOR-AMBIGUOUS（锚点命中 ${hits} 处，拒绝跑）` }); continue; }
