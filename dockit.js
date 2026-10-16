@@ -8380,8 +8380,9 @@ async function cmdSelftest(args) {
 
   // ---- R-A（v1.6.4）依赖覆盖率闸（任务书 R-A 主件）。理由：本仓同一形状**连犯三次**——D-1 后端族 → F-1 tesseract 族 →
   //      G-1 kit 族，每次只给"刚被踩到的族"补守卫，没人闸住"以后新增一条吃外部依赖却忘了带声明"。咽喉层兜底（t/ta 的
-  //      依赖缺失探针）解决"现状全绿"，这条闸解决"以后不复发"：缺失态下被 SKIP 的**集合逐字**钉死为注册表（v1.6.5 起不再只比条数），
-  //      多一条（新判据吃 kit 没登记）少一条（该 SKIP 的没 SKIP）、以及**成员被换掉而条数不变**的，都必须红。
+  //      依赖缺失探针）解决"现状全绿"，这条闸解决"以后不复发"：缺失态下被 SKIP 的判据逐个与注册表对账（v1.6.5 起不再只比条数），
+  //      注册表里少一条（该 SKIP 的没 SKIP）、吃 kit 的多一条（新判据忘登记）、以及**成员被换掉而条数不变**的，都必须红。
+  //      🔴 CI 首绿轮（2026-10-16）口径修正，逐条理由见闸体里的 KIT_SKIP_MARK 段：非 kit 归因的多出项不再判红。
   //      注册值来源：2026-10-06 机器枚举（方法与清单见迭代日志 v1.6.4）初版 50 条候选，与缺失态**实测**对账后钉死：
   //      注册值＝52（v1.6.4 初版 48＝缺失态实测 SKIP 49 − 闸自身不递归 1；含 2 条经守卫修复的缺失态假绿、7 条经定性剔除的枚举误报，
   //      逐条定性见迭代日志；v1.8.0 增 olealign 四判据 ⇒ 52；v1.9.0 增 batch 两判据 ⇒ 54，仍按缺失态实测逐字对账）。🔴 新增吃 kit 的判据 ⇒ 同步**注册表成员**（只许跟着机器实测改，**改的是期望值不是松紧**）。
@@ -8481,10 +8482,27 @@ const DEP_SKIP_REGISTRY = [
     const skips = (j.checks || []).filter((c) => c.startsWith('SKIP')).map((c) => c.slice(5, c.indexOf(' :: ') < 0 ? undefined : c.indexOf(' :: '))).filter((s) => !s.includes('依赖覆盖率闸') && !s.includes('AUD-1 第四臂哨兵'));
     const uniq = [...new Set(skips)];
     if (uniq.length !== skips.length) return `SKIP 集合 ≠ 注册值：实测出现重名（共 ${skips.length} 条／去重 ${uniq.length} 条），逐字对账失去意义`;
+    // 🔴 CI 首绿轮（2026-10-16）口径修正：注册表是**标定机器**的读数（本机 pandoc/poppler/tesseract 与私仓件全在位），
+    //    不是任何机器都该复现的常量。非标定机器（CI runner：无 tesseract／poppler／pandoc，也没有指路卡与 ADR-001 记的
+    //    python）必然多出一批**与 kit 无关**的 SKIP；旧口径拿"集合逐字相等"当门，等于要求外人复现标定机器的可选前置——
+    //    而红因写的是"新吃 kit 却没登记"，把人支去改注册表（本机一改就与实测不符，改不动）。公开仓第一轮 CI 常红、
+    //    上一轮改不动的就是这条。新口径按**归因**分流：① 注册表里每一条都必须还 SKIP（该 SKIP 没 SKIP 仍红）；
+    //    ② 由 kit 缺失洗出来的 SKIP（wrapT 的固定标记）一条都不许多 ⇒ 新增吃 kit 却忘登记的判据仍红，牙在这里；
+    //    ③ 其它可选前置缺失造成的 SKIP 不判红——它们在整跑输出里逐条带因可见，非标定机器上本就没有可比基线，不假装判得住。
+    const KIT_SKIP_MARK = "本条声明了 {needs:'kit'}";
+    const noteOf = new Map();
+    for (const c of (j.checks || [])) {
+      if (!c.startsWith('SKIP')) continue;
+      const body = c.slice(5); const cut = body.indexOf(' :: ');
+      const nm = cut < 0 ? body : body.slice(0, cut);
+      if (!noteOf.has(nm)) noteOf.set(nm, cut < 0 ? '' : body.slice(cut + 4));
+    }
     const extra = uniq.filter((x) => !DEP_SKIP_REGISTRY.includes(x));
     const missing = DEP_SKIP_REGISTRY.filter((x) => !uniq.includes(x));
-    if (extra.length || missing.length) {
-      return `SKIP 集合 ≠ 注册值（注册 ${DEP_SKIP_REGISTRY.length} 条／实测 ${uniq.length} 条）——≠ 注册值：多出来的是新吃 kit 却没登记的判据 [${extra.slice(0, 6).join(' / ') || '(无)'}]；少了的是该 SKIP 没 SKIP [${missing.slice(0, 6).join(' / ') || '(无)'}]`;
+    const unregisteredKit = extra.filter((x) => String(noteOf.get(x) || '').includes(KIT_SKIP_MARK));
+    const otherReason = extra.filter((x) => !unregisteredKit.includes(x));
+    if (missing.length || unregisteredKit.length) {
+      return `SKIP 集合与注册值逐名不一致（注册 ${DEP_SKIP_REGISTRY.length} 条／实测 ${uniq.length} 条；另有 ${otherReason.length} 条非 kit 归因的 SKIP 按 CI 首绿轮口径不判红）——该 SKIP 没 SKIP 的 [${missing.slice(0, 6).join(' / ') || '(无)'}]；吃 kit 却未登记的 [${unregisteredKit.slice(0, 6).join(' / ') || '(无)'}]`;
     }
     return true;
   });

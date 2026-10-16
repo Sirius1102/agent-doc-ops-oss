@@ -215,7 +215,7 @@ The public tree **carries no font binaries** (fonts have their own copyrights; t
 node dockit.js selftest         :: built-in judges (synthetic positive / negative / real dirty samples / reconciliations), one JSON line reporting passed|failed|skipped|total
 node dockit.js selftest --keep   :: keep the selftest dir for post-mortem
 npm run test:installers          :: installer checks in isolated dirs (bad-value args / swallowed switches / empty HOME / atomic install+backup / .bak keeps 3 / multi-dir surfacing / system-deps refusal+plans)
-node test\mutant.js --public     :: public mutant subset (auto-excludes non-shipped targets and reports the exclusion count; mutant count=266, ids M1-M268, M55/M82 historically unfilled; M47-M48 reserved; per-round attack notes live in the Chinese edition)
+node test\mutant.js --public     :: public mutant subset (auto-excludes non-shipped targets and reports the exclusion count; mutant count=267, ids M1-M269, M55/M82 historically unfilled; M47-M48 reserved; per-round attack notes live in the Chinese edition)
 node test\char-baseline.js check  :: repo charset baseline reconciliation (new codepoints only reported, not red; `--strict` gates; `selftest` runs its injection control; `save` needs owner consent DOCKIT_BASELINE_CONSENT=1)
 node test\font-baseline.js check   :: 26 font parse baselines (machine/font changes: run before and after)
 node test\mutant.js --list       :: list each mutant and the judge it should turn red

@@ -80,7 +80,8 @@ function checkClone() {
   const tmp = path.join(require('os').tmpdir(), 'dep-set-clone-' + Date.now());
   const cl = spawnSync('git', ['clone', '--no-hardlink', '--quiet', ROOT, tmp], { encoding: 'utf8' });
   if (cl.status !== 0) { console.log(JSON.stringify({ ok: false, op: 'dep-set-check', error: 'clone 失败：' + String(cl.stderr).slice(0, 160) })); process.exit(1); }
-  let j = null, stubFails = 0, liveSkips = [];
+  let j = null, stubFails = 0, liveSkips = [], otherReasonCount = 0;
+  const skipNote = new Map();
   try {
     if (!fs.existsSync(path.join(tmp, '.git'))) { console.log(JSON.stringify({ ok: false, op: 'dep-set-check', error: '夹具树没有 .git（会把缺 .git 误读成缺依赖——监工踩过的坑）' })); process.exit(1); }
     if (fs.existsSync(path.join(tmp, 'node_modules'))) { console.log(JSON.stringify({ ok: false, op: 'dep-set-check', error: '夹具树不该有 node_modules（这是真克隆态的形状）' })); process.exit(1); }
@@ -93,16 +94,29 @@ function checkClone() {
     if (j.failed !== stubFails) { console.log(JSON.stringify({ ok: false, op: 'dep-set-check', error: '真克隆态 failed=' + j.failed + '（剔除 aud1-stub 控制组后应为 0）' })); process.exit(1); }
     const uniq = [...new Set(liveSkips)].sort();
     const regSorted = reg.names.slice().sort();
+    // CI 首绿轮（2026-10-16）：与 dockit.js 覆盖率闸**同口径**——注册表是标定机器的读数，非标定机器上别的
+    // 可选前置（pandoc/poppler/tesseract/私仓件）缺失造成的 SKIP 是机器事实、不是漂移，不判红；但注册表里的
+    // 每一条都必须还 SKIP，且由 kit 缺失洗出来的 SKIP（wrapT 的固定标记）一条都不许多。
+    const KIT_SKIP_MARK = "本条声明了 {needs:'kit'}";
+    for (const c of (j.checks || [])) {
+      if (!c.startsWith('SKIP')) continue;
+      const body = c.slice(5); const cut = body.indexOf(' :: ');
+      const nm = cut < 0 ? body : body.slice(0, cut);
+      if (!skipNote.has(nm)) skipNote.set(nm, cut < 0 ? '' : body.slice(cut + 4));
+    }
     const extra = uniq.filter((s) => !regSorted.includes(s));
     const missing = regSorted.filter((s) => !uniq.includes(s));
-    if (extra.length || missing.length) {
-      console.log(JSON.stringify({ ok: false, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: uniq.length, extra, missing, note: '真克隆态 SKIP 集合与注册表不一致——新增吃 kit 的判据要登记，或某条该 SKIP 的没 SKIP' }, null, 1));
+    const unregisteredKit = extra.filter((s) => String(skipNote.get(s) || '').includes(KIT_SKIP_MARK));
+    const otherReason = extra.filter((s) => !unregisteredKit.includes(s));
+    otherReasonCount = otherReason.length;
+    if (missing.length || unregisteredKit.length) {
+      console.log(JSON.stringify({ ok: false, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: uniq.length, missing, unregisteredKit, otherReason, note: '真克隆态：注册表里的判据没 SKIP，或有吃 kit 的判据没登记——两者都要跟着机器实测改（其它可选前置缺失的多出项按 CI 首绿轮口径不判红）' }, null, 1));
       process.exit(1);
     }
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
-  console.log(JSON.stringify({ ok: true, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: liveSkips.length, note: '真克隆态：除 aud1-stub 控制组外 failed=0，SKIP 集合逐字等于注册表' }));
+  console.log(JSON.stringify({ ok: true, op: 'dep-set-check', failed: j.failed, stubFails, regCount: reg.count, liveCount: liveSkips.length, otherReasonCount, note: '真克隆态：除 aud1-stub 控制组外 failed=0；注册表成员全部 SKIP，且没有「吃 kit 却未登记」的多出项（其它可选前置缺失的多出项逐条带因、不判红）' }));
 }
 
 function exportMissing() {

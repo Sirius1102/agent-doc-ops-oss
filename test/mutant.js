@@ -438,6 +438,13 @@ const MUTANTS = [
   { id: 'M266', file: D, only: 'redact 真涂黑', name: '--dry-run 试运行分支摘掉（预览变真跑＝删字画框落盘，试运行零写入形状复辟）', find: '    if (dryRun) {', to: '    if (false) { // M266：试运行分支摘掉', mustRed: ['redact 真涂黑'], msg: ['dry-run 正向没跑通'] },
   { id: 'M267', file: 'install-skill.js', only: '安装器与基线台输出不回显绝对路径', name: '路径占位摘掉（最长前缀折叠不跑＝输出回吐裸绝对路径，粘贴即泄用户名）', find: '  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', to: '  if (false && cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', mustRed: ['安装器与基线台输出不回显绝对路径'], msg: ['绝对路径'] },
   { id: 'M268', file: D, only: 'substitute-fonts', name: '字体哈希比对摘掉（同名异容照绿＝"核全量"是空话，doctor 全绿≠字体正确）', find: '        if (!h || h.toLowerCase() !== String(x.sha256).toLowerCase()) badHash.push(x.name);', to: '        if (false) badHash.push(x.name); // M268：哈希比对摘掉', mustRed: ['substitute-fonts 哨兵按登记清单核全量'], msg: ['同名异容没判红'] },
+  // ---- CI 首绿轮（2026-10-16）：覆盖率闸口径改成"按归因分流"后，**新分支自己**的牙。
+  //      M106 打的是"未声明 ⇒ 缺失态必红 ⇒ failed≠控制组"那条路；本例打的是"已声明 ⇒ 被洗成 SKIP ⇒ 只能靠集合对账"那条路。
+  //      🔴 注入形状必须是**不新增判据**（新建一条 t() 会先改判据定义数、把「doc 卫生」打红，闸门就走成 failed≠控制组 分支，
+  //      本例就测不到新分支了——第一版实犯）：把一条**不在注册表里**的静态判据改成「声明 {needs:'kit'} 且恒失败」，
+  //      它在缺失态被洗成 kit 归因的 SKIP、名字又不在注册表 ⇒ 只有新分支能抓它（missing 为空，旧集合口径与新分支都红，
+  //      但红因文本只有新分支才带「吃 kit 却未登记的」）。
+  { id: 'M269', file: D, only: '依赖覆盖率闸', name: 'CI 首绿轮：把一条**不在注册表里**的静态判据改成「声明 {needs:kit} 且恒失败」——它被洗成 SKIP、不进 failed≠控制组那条路，必须由「吃 kit 却未登记」新分支抓红', find: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => VERSION.startsWith('3.'));", to: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => false, {needs:'kit'});", mustRed: ['依赖覆盖率闸'], msg: ['吃 kit 却未登记的'] },
 ];
 
 const argv = process.argv.slice(2);
@@ -447,7 +454,7 @@ const requestedIds = argv.filter((a) => /^M\d+$/.test(a));
 const unknownArgs = argv.filter((a) => a !== '--public' && !/^M\d+$/.test(a));
 const unknownIds = requestedIds.filter((id) => !MUTANTS.some((m) => m.id === id));
 if (unknownArgs.length || unknownIds.length) {
-  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M268）' }, null, 1));
+  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M269）' }, null, 1));
   process.exit(2);
 }
 const requested = requestedIds.length ? MUTANTS.filter((m) => requestedIds.includes(m.id)) : MUTANTS;
