@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-15T14:15:38.454Z",
+ "generated": "2026-10-16T07:19:10.779Z",
  "source": "DOCKIT_KIT_CLI 指不存在路径的模拟态 selftest；剔除依赖覆盖率闸自身与 AUD-1 第四臂哨兵（设施自身不递归）",
- "count": 72,
+ "count": 73,
  "names": [
   "batch 批量转换：清单计数、产物与原件零改动",
   "batch 混合失败：单件失败不拖垮、整体判负",
@@ -39,6 +39,7 @@
   "pages 降级：kit 缺失时 PDF 用 poppler pdftoppm 渲染（自报 backend）；OOXML 与 poppler 也缺失时不扩大、回 unavailable",
   "pdftext 直取文本层（数字中文 PDF 免 OCR）：txt 含已知中文、chars>0、正文不回显进 JSON",
   "pipeline DAG：依赖、条件分支、拓扑序、环与未知 id 都拦（v2.7.0 通用 DAG 落地）",
+  "pipeline 串联：PDF 输入跳过 to（to-pages）；docx 走 to>pages；to-pages-ocr 出 ocr；坏 flow 拒绝",
   "pipeline 步序列：逗号 flow 驱动（未知步拒、无 to 的非 PDF 拒、to 不在首位拒、正向 to,pdftext、旧名仍可用）",
   "pix 有字页非白像素 > 0",
   "pix 空白对照页非白像素 = 0（这条红了说明像素判据本身坏了）",

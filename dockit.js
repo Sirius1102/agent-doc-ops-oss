@@ -8427,6 +8427,7 @@ const DEP_SKIP_REGISTRY = [
     "pdftext 直取文本层（数字中文 PDF 免 OCR）：txt 含已知中文、chars>0、正文不回显进 JSON",
     "pipeline DAG：依赖、条件分支、拓扑序、环与未知 id 都拦（v2.7.0 通用 DAG 落地）",
     "pipeline 步序列：逗号 flow 驱动（未知步拒、无 to 的非 PDF 拒、to 不在首位拒、正向 to,pdftext、旧名仍可用）",
+    "pipeline 串联：PDF 输入跳过 to（to-pages）；docx 走 to>pages；to-pages-ocr 出 ocr；坏 flow 拒绝",
     "pix 有字页非白像素 > 0",
     "pix 空白对照页非白像素 = 0（这条红了说明像素判据本身坏了）",
     "real 本机真实中文文档：整本渲染页数>1",
@@ -8902,6 +8903,9 @@ const DEP_SKIP_REGISTRY = [
   });
 
   await ta('pipeline 串联：PDF 输入跳过 to（to-pages）；docx 走 to>pages；to-pages-ocr 出 ocr；坏 flow 拒绝', async () => {
+    // kit 缺失态整条 SKIP（缺失态 SKIP 集合已登记）：to/pages 现场面在无 kit 时跑不了；
+    // 未知步与坏 flow 纯校验由「pipeline 步序列」覆盖，中途失败形状只在 kit 在位时可测。
+    if (!resolveKitCli().present) return 'skip（kit 缺失态：to/pages 现场面跑不了）';
     const LS = ensureDir(`${S}/v22-pipeline`);
     const pl = (() => { try { return require('pdf-lib'); } catch { return null; } })();
     if (!pl) return 'skip（无 pdf-lib，PDF 夹具造不了）';
@@ -8929,12 +8933,10 @@ const DEP_SKIP_REGISTRY = [
       { name: '_rels/.rels', data: Buffer.from(rels), method: 0 },
       { name: 'word/document.xml', data: Buffer.from(docXml), method: 8 },
     ]));
-    if (resolveKitCli().present) {
-      const r2 = cli(['pipeline', docx, 'to-pages']);
-      remember(r2);
-      if (!r2.j || r2.j.ok !== true) bad.push('docx to-pages 失败：' + JSON.stringify(r2.j && { error: r2.j.error }));
-      else if (r2.j.skippedTo !== false || r2.j.steps.map((s) => s.step).join('>') !== 'to>pages') bad.push('应走 to>pages：' + JSON.stringify({ skippedTo: r2.j.skippedTo, steps: r2.j.steps.map((s) => s.step) }));
-    }
+    const r2 = cli(['pipeline', docx, 'to-pages']);
+    remember(r2);
+    if (!r2.j || r2.j.ok !== true) bad.push('docx to-pages 失败：' + JSON.stringify(r2.j && { error: r2.j.error }));
+    else if (r2.j.skippedTo !== false || r2.j.steps.map((s) => s.step).join('>') !== 'to>pages') bad.push('应走 to>pages：' + JSON.stringify({ skippedTo: r2.j.skippedTo, steps: r2.j.steps.map((s) => s.step) }));
     // ③ to-pages-ocr
     if (fs.existsSync(TESSERACT_EXE)) {
       const r3 = cli(['pipeline', pdf, 'to-pages-ocr']);
@@ -8954,7 +8956,7 @@ const DEP_SKIP_REGISTRY = [
     // 自检造的 pipeline 中间产物（_out/pipeline-*）随测试清掉，不留垃圾
     for (const wd of workDirs) { try { fs.rmSync(wd, { recursive: true, force: true }); } catch {} }
     return bad.length ? bad.slice(0, 6).join(' | ') : true;
-  });
+  }, { needs: 'kit' });
 
   // ---- v2.1.0：pdftext（poppler 文本层）/ media PDF（pdfimages）/ inspect AcroForm 判据组（攻击见 M150–M156）----
   // 正/负向两态都在本机实测过：pdftotext 对数字中文 PDF 瞬时取字（免 OCR）；pdfimages 中文输出路径走 cwd 宽字符绕 argv 解码坑。
