@@ -1599,7 +1599,9 @@ function cmdDoctor(args) {
   try { fm = JSON.parse(fs.readFileSync(FM_PATH, 'utf8')); } catch (e) { fmWhy = String((e && e.code) || e); }
   const hostNow = process.env.COMPUTERNAME || '';
   if (!fm || !Array.isArray(fm.files) || !fm.files.length) {
-    push('substitute-fonts-present', absent.length === 0, `登记清单不可用（读取失败：${fmWhy || 'files 字段缺失'}）→ 退回核 ${SENTINELS.length} 个通用替身名：` + (absent.length ? `缺 ${absent.length}/${SENTINELS.length}: ${absent.join(', ')}（声明这些族的文档版式会变，跑 node test/font-baseline.js check 看差异）` : `${SENTINELS.length}/${SENTINELS.length} 在位`), absent.length === 0);
+    // 清单不可读＝无校准：缺件也不判红（与非标定分支同口径——没有清单就没有"应有"的定义，
+    // 红了也不可执行；缺的件名照样点出来，硬核验走 install-fonts --check）。
+    push('substitute-fonts-present', absent.length === 0, `登记清单不可用（读取失败：${fmWhy || 'files 字段缺失'}）→ 退回核 ${SENTINELS.length} 个通用替身名：` + (absent.length ? `缺 ${absent.length}/${SENTINELS.length}: ${absent.join(', ')}（声明这些族的文档版式会变，跑 node test/font-baseline.js check 看差异）` : `${SENTINELS.length}/${SENTINELS.length} 在位`), true);
   } else if (fm.标定机器 && fm.标定机器 !== hostNow) {
     // 公开树版（v3.0.1 开源化轮）：机器名不进命令输出——占位符或非标定机器一律报「非标定机器」，
     // 不回显主机名本身（hostNow 是运行时出口，外人分享 doctor 输出时会带上本机名）。
