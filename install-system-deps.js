@@ -35,6 +35,22 @@ const DOCKIT = path.join(ROOT, 'dockit.js');
 const LOCALAPP = process.env.LOCALAPPDATA || path.join(os.homedir() || '', 'AppData', 'Local');
 const OFFICECLI_ARCHIVE_DIR = path.join(LOCALAPP, 'agent-doc-ops', 'bin', 'archive');
 
+// 路径脱敏（发布前 P0-1）：输出里的人机路径折叠成占位（本地仍可按占位找到，贴到公开 issue 不泄用户名）。
+// 规则：USERPROFILE→%USERPROFILE%、LOCALAPPDATA→%LOCALAPPDATA%、本仓→<REPO>（与 char-baseline 同一套）。
+function foldPath(p) {
+  // 最长前缀胜出（LOCALAPPDATA 嵌在 USERPROFILE 里时取更具体的那个）。
+  let s = String(p);
+  const cands = [
+    [ROOT, '<REPO>'],
+    [process.env.LOCALAPPDATA || '', '%LOCALAPPDATA%'],
+    [process.env.ProgramFiles || 'C:\\Program Files', '%ProgramFiles%'],
+    [process.env.SystemRoot || process.env.windir || 'C:\\Windows', '%WINDIR%'],
+    [process.env.USERPROFILE || process.env.HOME || '', '%USERPROFILE%'],
+  ].filter(([c]) => c && (s === c || s.startsWith(c + path.sep)));
+  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }
+  return s;
+}
+
 const COMPONENTS = {
   vc: { title: 'VC++ v14 运行库（x64）', pin: 'v14.x x64（随 Visual Studio 运行库发布）', needsAdmin: true, mayReboot: true },
   tesseract: { title: 'Tesseract OCR + chi_sim', pin: '5.4.0.20240606', installDir: 'C:\\Program Files\\Tesseract-OCR', env: ['DOCKIT_TESSDATA', 'DOCKIT_TESSERACT'] },
@@ -122,7 +138,7 @@ function probe(name) {
 function planFor(name, a) {
   const c = COMPONENTS[name];
   const pr = probe(name);
-  const plan = { component: name, title: c.title, pin: c.pin, present: pr.present, probeDetail: pr.detail, steps: [], warnings: [], missing: [] };
+  const plan = { component: name, title: c.title, pin: c.pin, present: pr.present, probeDetail: foldPath(pr.detail), steps: [], warnings: [], missing: [] };
   if (c.needsAdmin) plan.warnings.push('需管理员权限（机器级安装）');
   if (c.mayReboot) plan.warnings.push('安装后可能要求重启——重启由用户自己决定，本工具不自动重启');
   plan.warnings.push('安装包界面需一次人工点击（不传静默开关）；本工具不写注册表、不改 PATH');
@@ -140,7 +156,7 @@ function planFor(name, a) {
     if (url && !/5\.4\.0\.20240606/.test(url)) plan.missing.push(`URL 看不出版本钉 ${c.pin}——换与 pin 一致的构建`);
     plan.steps.push({ kind: 'download', url: url || '(待调用方给出)', dest: '<temp>\\tesseract-setup.exe' });
     plan.steps.push({ kind: 'verify-sha256', sha256: sha || '(待调用方给出)' });
-    plan.steps.push({ kind: 'run-installer', exe: '<temp>\\tesseract-setup.exe', args: [], interactive: true, defaultDir: c.installDir });
+    plan.steps.push({ kind: 'run-installer', exe: '<temp>\\tesseract-setup.exe', args: [], interactive: true, defaultDir: foldPath(c.installDir) });
     plan.steps.push({ kind: 'env-note', text: `语言包目录可用 ${c.env[0]} 覆盖；装完用 doctor 的 tesseract-ocr / ocr-lang-pack 验收` });
     plan.steps.push({ kind: 'doctor', check: 'tesseract-ocr, ocr-lang-pack（WARN 类）' });
   }
@@ -189,7 +205,7 @@ function execPlan(plan) {
         const dest = path.join(tmp, path.basename(s.dest));
         download(s.url, dest);
         s._local = dest;
-        log.push(`下载 OK：${dest}`);
+        log.push(`下载 OK：${foldPath(dest)}`);
       } else if (s.kind === 'verify-sha256') {
         const dl = plan.steps.find((x) => x._local);
         const actual = sha256File(dl._local);
@@ -210,7 +226,7 @@ function execPlan(plan) {
         fs.mkdirSync(path.dirname(s.dest), { recursive: true });
         fs.copyFileSync(dl._local, s.dest);
         fs.writeFileSync(path.join(path.dirname(s.dest), 'acquisition.json'), JSON.stringify({ url: plan._url, sha256: plan._sha, version: plan._ver, date: new Date().toISOString() }, null, 1));
-        log.push(`已归档：${s.dest}`);
+        log.push(`已归档（dest 已折叠显示，见 dry-run 计划）：${foldPath(s.dest)}`);
       } else if (s.kind === 'env-note') {
         log.push('指路：' + s.text);
       } else if (s.kind === 'doctor') {
@@ -234,13 +250,15 @@ function main(argv) {
   if (process.platform !== 'win32') fail({ code: 'unsupported-platform', error: `仅支持 Windows（当前 ${process.platform}）`, next: '换 Windows 机器跑；package.json os 已钉死 win32' });
   if (a.list) {
     const items = ALL.map((c) => Object.assign({ component: c }, COMPONENTS[c], probe(c)));
+    for (const it of items) { if (it.detail) it.detail = foldPath(it.detail); if (it.archiveDir) it.archiveDir = foldPath(it.archiveDir); if (it.installDir) it.installDir = foldPath(it.installDir); }
     console.log(JSON.stringify({ ok: true, op: 'list', items, note: '只探测不装机；装机走 --dry-run 先看计划，再 --components … --yes 执行' }));
     return;
   }
   const comps = a.components || [...ALL];
   const plans = comps.map((c) => planFor(c, a));
   if (a.dryRun) {
-    console.log(JSON.stringify({ ok: true, op: 'dry-run', plans, note: '只打印计划，不下载不安装；执行加 --yes（VC++ 另需 --include-vc）' }));
+    const shown = plans.map((p) => Object.assign({}, p, { steps: p.steps.map((s) => (s.dest ? Object.assign({}, s, { dest: foldPath(s.dest) }) : s)) }));
+    console.log(JSON.stringify({ ok: true, op: 'dry-run', plans: shown, note: '只打印计划，不下载不安装；执行加 --yes（VC++ 另需 --include-vc）' }));
     return;
   }
   if (!a.yes) fail({ code: 'refuse-no-confirm', error: '缺 --yes：系统依赖安装必须显式确认', next: '先 --dry-run 看计划，再 --components <csv|all> --yes 执行', plans: plans.map((p) => ({ component: p.component, missing: p.missing })) });

@@ -6,6 +6,23 @@ const fs = require('fs');
 const path = require('path');
 
 const SRC = path.join(__dirname, 'skills', 'agent-doc-ops');
+const ROOT = __dirname;
+
+// 路径脱敏（发布前 P0-1）：输出里的人机路径折叠成占位（本地仍可按占位找到，贴到公开 issue 不泄用户名）。
+// 规则：USERPROFILE→%USERPROFILE%、LOCALAPPDATA→%LOCALAPPDATA%、本仓→<REPO>（与 char-baseline 同一套）。
+function foldPath(p) {
+  // 最长前缀胜出（LOCALAPPDATA 嵌在 USERPROFILE 里时取更具体的那个）。
+  let s = String(p);
+  const cands = [
+    [ROOT, '<REPO>'],
+    [process.env.LOCALAPPDATA || '', '%LOCALAPPDATA%'],
+    [process.env.ProgramFiles || 'C:\\Program Files', '%ProgramFiles%'],
+    [process.env.SystemRoot || process.env.windir || 'C:\\Windows', '%WINDIR%'],
+    [process.env.USERPROFILE || process.env.HOME || '', '%USERPROFILE%'],
+  ].filter(([c]) => c && (s === c || s.startsWith(c + path.sep)));
+  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }
+  return s;
+}
 
 function candidateDirs() {
   const home = process.env.USERPROFILE || process.env.HOME;
@@ -59,7 +76,7 @@ function main(argv) {
     process.exit(1);
   }
   const cands = a.dir ? [a.dir] : candidateDirs().filter((d) => fs.existsSync(d));
-  if (a.list) { console.log(JSON.stringify({ ok: true, detected: cands, source: SRC })); return; }
+  if (a.list) { console.log(JSON.stringify({ ok: true, detected: cands.map(foldPath), source: foldPath(SRC) })); return; }
   if (!cands.length) {
     console.error(JSON.stringify({ ok: false, code: 'no-skills-dir', next: '用 --dir 显式指定技能目录（如 %USERPROFILE%\\.codex\\skills）' }));
     process.exit(1);
@@ -83,7 +100,7 @@ function main(argv) {
     console.error(JSON.stringify({ ok: false, code: 'install-failed', error: String(e.message || e).slice(0, 160), next: '看 error 原文；旧技能卡保留于 ' + (backedUp ? path.basename(backedUp) : '（无备份）') }));
     process.exit(1);
   }
-  const result = { ok: true, installed: dst, backedUp, skippedDirs, verify: `node ${process.argv[1]} --list` };
+  const result = { ok: true, installed: foldPath(dst), backedUp: backedUp ? foldPath(backedUp) : null, skippedDirs: skippedDirs.map(foldPath), verify: `node ${foldPath(process.argv[1])} --list` };
   console.log(JSON.stringify(result));
 }
 

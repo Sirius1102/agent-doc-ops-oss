@@ -33,3 +33,4 @@ node test\mutant.js --public
 - `node test\char-baseline.js save` 需要机主同意（`DOCKIT_BASELINE_CONSENT=1`），并在提交说明里写清新增码点的来源。
 - 作者与组织名（Sirius／Sirius1102）为机主公开身份，刻意保留；不要当泄漏清理。
 - CI 只跑子集（见 `.github/workflows/ci.yml`）：无字体基线、无写后端现场面、无真机样本——全量按上序本地跑。
+- 🔴 贴输出到公开 issue 前先删路径行：`inspect`／`to` 等回执会原样回显输入/产物路径（按需回显，不做占位化）；诊断类输出已占位化，可直接贴。

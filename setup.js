@@ -21,6 +21,22 @@ const path = require('path');
 
 const ROOT = __dirname;
 
+// 路径脱敏（发布前 P0-1）：输出里的人机路径折叠成占位（本地仍可按占位找到，贴到公开 issue 不泄用户名）。
+// 规则：USERPROFILE→%USERPROFILE%、LOCALAPPDATA→%LOCALAPPDATA%、本仓→<REPO>（与 char-baseline 同一套）。
+function foldPath(p) {
+  // 最长前缀胜出（LOCALAPPDATA 嵌在 USERPROFILE 里时取更具体的那个）。
+  let s = String(p);
+  const cands = [
+    [ROOT, '<REPO>'],
+    [process.env.LOCALAPPDATA || '', '%LOCALAPPDATA%'],
+    [process.env.ProgramFiles || 'C:\\Program Files', '%ProgramFiles%'],
+    [process.env.SystemRoot || process.env.windir || 'C:\\Windows', '%WINDIR%'],
+    [process.env.USERPROFILE || process.env.HOME || '', '%USERPROFILE%'],
+  ].filter(([c]) => c && (s === c || s.startsWith(c + path.sep)));
+  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }
+  return s;
+}
+
 function detectSkillDirs() {
   const home = process.env.USERPROFILE || process.env.HOME;
   if (!home) return [];
@@ -111,7 +127,7 @@ function main(argv) {
   const detected = detectSkillDirs().filter((d) => fs.existsSync(d));
 
   if (a.list) {
-    console.log(JSON.stringify({ ok: true, op: 'setup-list', detectedSkillDirs: detected, note: '用 --skill-dir 显式指定，或直接跑 node setup.js 装进第一个已存在的目录' }));
+    console.log(JSON.stringify({ ok: true, op: 'setup-list', detectedSkillDirs: detected.map(foldPath), note: '用 --skill-dir 显式指定，或直接跑 node setup.js 装进第一个已存在的目录' }));
     return;
   }
 
@@ -141,7 +157,7 @@ function main(argv) {
   } else {
     for (const dir of targets) {
       const r = installSkill(dir);
-      steps.push({ step: 'skill install → ' + dir, ok: r.ok, detail: r.ok ? (r.backedUp ? '已装（旧卡备份于 ' + path.basename(r.backedUp) + '）' : '已装') : r.error });
+      steps.push({ step: 'skill install → ' + foldPath(dir), ok: r.ok, detail: r.ok ? (r.backedUp ? '已装（旧卡备份于 ' + path.basename(r.backedUp) + '）' : '已装') : r.error });
     }
   }
 
@@ -165,7 +181,7 @@ function main(argv) {
   }
 
   const ok = steps.every((s) => s.ok);
-  console.log(JSON.stringify({ ok, op: 'setup', steps, skippedSkillDirs, note: '系统侧可选依赖（Tesseract/Poppler/Pandoc/OfficeCLI）按 doctor 的 WARN 逐条指路安装；OCR/渲染等命令缺件时回 unavailable 不误出半成品' }, null, 1));
+  console.log(JSON.stringify({ ok, op: 'setup', steps, skippedSkillDirs: skippedSkillDirs.map(foldPath), note: '系统侧可选依赖（Tesseract/Poppler/Pandoc/OfficeCLI）按 doctor 的 WARN 逐条指路安装；OCR/渲染等命令缺件时回 unavailable 不误出半成品' }, null, 1));
   process.exit(ok ? 0 : 1);
 }
 

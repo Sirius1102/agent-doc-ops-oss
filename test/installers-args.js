@@ -20,6 +20,12 @@ function run(script, args, envExtra) {
   return { exit: p.status, output: p.stdout || p.stderr || '' };
 }
 const j = (r) => JSON.parse(r.output);
+// 把输出里的占位折回真实路径再做文件断言（输出本身必须保持占位，见 T15–T18）
+const expand = (s) => String(s)
+  .replace(/^%USERPROFILE%/, cwd)
+  .replace(/^%LOCALAPPDATA%/, process.env.LOCALAPPDATA || '')
+  .replace(/^<REPO>/, root);
+const ABS_RE = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|(?:^|[\s"'(])\/(?:home|Users|tmp|var|opt|etc|usr|mnt|root)\/)/;
 
 try {
   const setup = run('setup.js', ['--no-deps', '--skill-dir', '--no-doctor']);
@@ -57,7 +63,7 @@ try {
   const i2 = j(run('install-skill.js', ['--dir', d1]));
   assert.equal(i2.ok, true);
   assert.notEqual(i2.backedUp, null);
-  assert.equal(fs.existsSync(path.join(i2.backedUp, 'marker.txt')), true);
+  assert.equal(fs.existsSync(path.join(expand(i2.backedUp), 'marker.txt')), true);
   assert.equal(fs.existsSync(path.join(d1, 'agent-doc-ops', 'marker.txt')), false);
   assert.equal(fs.existsSync(path.join(d1, 'agent-doc-ops', 'SKILL.md')), true);
 
@@ -122,7 +128,32 @@ try {
   const dep = sb8.steps.find((s) => s.step === 'system deps → tesseract');
   assert.ok(dep && dep.ok === false && /refuse/.test(dep.detail));
 
-  console.log(JSON.stringify({ ok: true, tests: 14 }));
+  // T15：install-skill --list 输出占位化（无绝对路径，目录仍可辨认）
+  const ld = path.join(cwd, '.codex', 'skills');
+  fs.mkdirSync(ld, { recursive: true });
+  const l1 = run('install-skill.js', ['--list']);
+  assert.equal(j(l1).ok, true);
+  assert.ok(j(l1).detected.length >= 1 && j(l1).detected[0].includes('%USERPROFILE%'));
+  assert.equal(ABS_RE.test(l1.output), false);
+
+  // T16：char-baseline check 输出占位化（对照基线走 <REPO>，落点相对名）
+  const bl = run('test/char-baseline.js', ['check']);
+  assert.equal(j(bl).ok, true);
+  assert.ok(String(j(bl)['对照基线']).startsWith('<REPO>'));
+  assert.equal(ABS_RE.test(bl.output), false);
+
+  // T17：setup --list 输出占位化
+  const sl2 = run('setup.js', ['--list']);
+  assert.ok(j(sl2).detectedSkillDirs.length >= 1 && j(sl2).detectedSkillDirs[0].includes('%USERPROFILE%'));
+  assert.equal(ABS_RE.test(sl2.output), false);
+
+  // T18：install-system-deps --list 输出占位化（本机真实探测亦不得带裸路径）
+  const sd = run('install-system-deps.js', ['--list']);
+  assert.equal(j(sd).ok, true);
+  assert.equal(j(sd).items.length, 5);
+  assert.equal(ABS_RE.test(sd.output), false);
+
+  console.log(JSON.stringify({ ok: true, tests: 18 }));
 } finally {
   fs.rmSync(cwd, { recursive: true, force: true });
 }

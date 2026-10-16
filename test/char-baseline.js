@@ -21,6 +21,21 @@ function spawnSync(exe, args, opts) {
 }
 
 const ROOT = path.resolve(__dirname, '..');
+// 路径脱敏（发布前 P0-1）：输出里的人机路径折叠成占位（本地仍可按占位找到，贴到公开 issue 不泄用户名）。
+// 规则与 install-*.js 同一套：USERPROFILE→%USERPROFILE%、LOCALAPPDATA→%LOCALAPPDATA%、本仓→<REPO>。
+function foldPath(p) {
+  // 最长前缀胜出（LOCALAPPDATA 嵌在 USERPROFILE 里时取更具体的那个）。
+  let s = String(p);
+  const cands = [
+    [ROOT, '<REPO>'],
+    [process.env.LOCALAPPDATA || '', '%LOCALAPPDATA%'],
+    [process.env.ProgramFiles || 'C:\\Program Files', '%ProgramFiles%'],
+    [process.env.SystemRoot || process.env.windir || 'C:\\Windows', '%WINDIR%'],
+    [process.env.USERPROFILE || process.env.HOME || '', '%USERPROFILE%'],
+  ].filter(([c]) => c && (s === c || s.startsWith(c + path.sep)));
+  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }
+  return s;
+}
 // 基线路径可改（判据要从**外面**验 save 的拒绝逻辑，若不可改，那条反向测试在"闸门被拆掉"的变异下会真把基线覆盖掉）
 const BASELINE = process.env.DOCKIT_CHAR_BASELINE_PATH || path.join(__dirname, 'baseline-chars.json');
 // 扫描面复用装置自己的那份清单（单一来源），再补上 docs/adr 与本目录的台子
@@ -87,7 +102,7 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
     out({ ok: true, op: 'save', 文件数: data.文件数, codepointCount: all.size, 基线字节: fs.statSync(BASELINE).size });
     process.exit(0);
   }
-  if (!b) { out({ ok: false, op: 'check', why: '基线文件不在：' + BASELINE, 实算码点数: all.size }); process.exit(1); }
+  if (!b) { out({ ok: false, op: 'check', why: '基线文件不在：' + foldPath(BASELINE), 实算码点数: all.size }); process.exit(1); }
   // --at <路径>：对照**另一份**基线跑（复盘/迁移用；也是"消失清单"这条尺的自证入口——
   //   基线与语料相同时真实消失恒为 0，那时任何"消失算坏了"的实现都不会被发现，必须能造一个已知消失出来量）。
   const atIdx = argv.indexOf('--at');
@@ -98,9 +113,9 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
   let bUse = b;
   let atApplied = null; // 🔴 只有真的换了对照件才敢说"对照的是这份"——否则这个字段会变成一句谎（M256 的形状）
   if (atPath) {
-    if (!fs.existsSync(atPath)) { out({ ok: false, op: 'check', why: `--at 指的基线文件不在：${atPath}` }); process.exit(1); }
+    if (!fs.existsSync(atPath)) { out({ ok: false, op: 'check', why: `--at 指的基线文件不在：${foldPath(atPath)}` }); process.exit(1); }
     let parsed; try { parsed = JSON.parse(fs.readFileSync(atPath, 'utf8')); } catch (e) { out({ ok: false, op: 'check', why: `--at 基线解析失败：${String(e.message).slice(0, 120)}` }); process.exit(1); }
-    if (!Array.isArray(parsed.codepoints)) { out({ ok: false, op: 'check', why: `--at 基线里没有 codepoints 数组：${atPath}` }); process.exit(1); }
+    if (!Array.isArray(parsed.codepoints)) { out({ ok: false, op: 'check', why: `--at 基线里没有 codepoints 数组：${foldPath(atPath)}` }); process.exit(1); }
     bUse = { meta: parsed, set: new Set(parsed.codepoints) };
     atApplied = atPath;
   }
@@ -110,7 +125,7 @@ if (mode === 'check' || mode === 'save' || mode === 'init') {
   out({
     ok: strict ? extra.length === 0 : true, op: 'check', strict,
     基线码点数: bUse.set.size, 实算码点数: all.size, 基线生成: bUse.meta.生成, 基线来源: bUse.meta.基线来源 || '未记录',
-    对照基线: atApplied || BASELINE,
+    对照基线: foldPath(atApplied || BASELINE),
     新增码点数: extra.length, 新增码点: extra.slice(0, 60).map((cp) => 'U+' + cp.toString(16) + '(' + String.fromCodePoint(cp) + ')'),
     消失码点数: gone.length,
     // 「消失」以前只给条数不给清单：基线里有过、现在全文扫不到的码点，多半是某段文本被删掉或改坏了。

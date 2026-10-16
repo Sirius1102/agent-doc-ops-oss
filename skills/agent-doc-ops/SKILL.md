@@ -5,7 +5,7 @@ description: Convert, render, inspect, recalculate and metadata-scrub Office doc
 
 # dockit — document operations device (pointer card, not a copy)
 
-<!-- 判据条数=163 -->
+<!-- 判据条数=164 -->
 
 This card does one thing: **point the session at the single source of truth.** The
 command list, response fields, boundaries and report format all come from the device

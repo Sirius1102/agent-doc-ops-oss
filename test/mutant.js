@@ -436,6 +436,7 @@ const MUTANTS = [
   { id: 'M264', file: D, only: 'redact 真涂黑', name: '旋转页前置守卫摘掉（/Rotate≠0 的件照跑＝按错误映射删错字/删不动，v3.1.0 实测坐标失配的旧形状复辟）', find: "    if (rotatedPages.length && !dryRun) die('unsupported-format',", to: "    if (false && rotatedPages.length && !dryRun) die('unsupported-format',", mustRed: ['redact 真涂黑'], msg: ['旋转页该前置拒'] },
   { id: 'M265', file: D, only: 'redact 真涂黑', name: '括号感知切分换回旧非贪婪正则（字符串字面量 TARGET 的 ET 截断复现＝删块边界失配，v2.7.0 起的老缺陷）', find: '        for (const [bs, be] of findTextBlocks(s).reverse()) {', to: '        for (const bs of [0]) { const be = s.length; void findTextBlocks;', mustRed: ['redact 真涂黑'], msg: ['该留的文字也弄丢了'] },
   { id: 'M266', file: D, only: 'redact 真涂黑', name: '--dry-run 试运行分支摘掉（预览变真跑＝删字画框落盘，试运行零写入形状复辟）', find: '    if (dryRun) {', to: '    if (false) { // M266：试运行分支摘掉', mustRed: ['redact 真涂黑'], msg: ['dry-run 正向没跑通'] },
+  { id: 'M267', file: 'install-skill.js', only: '安装器与基线台输出不回显绝对路径', name: '路径占位摘掉（最长前缀折叠不跑＝输出回吐裸绝对路径，粘贴即泄用户名）', find: '  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', to: '  if (false && cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', mustRed: ['安装器与基线台输出不回显绝对路径'], msg: ['绝对路径'] },
 ];
 
 const argv = process.argv.slice(2);
@@ -445,7 +446,7 @@ const requestedIds = argv.filter((a) => /^M\d+$/.test(a));
 const unknownArgs = argv.filter((a) => a !== '--public' && !/^M\d+$/.test(a));
 const unknownIds = requestedIds.filter((id) => !MUTANTS.some((m) => m.id === id));
 if (unknownArgs.length || unknownIds.length) {
-  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M266）' }, null, 1));
+  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M267）' }, null, 1));
   process.exit(2);
 }
 const requested = requestedIds.length ? MUTANTS.filter((m) => requestedIds.includes(m.id)) : MUTANTS;

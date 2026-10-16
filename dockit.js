@@ -1697,6 +1697,7 @@ function cmdTo(args) {
   const outExt = extOf(output);
   if (!FORMAT_MATRIX[fam].outputs.includes(outExt)) die('unsupported-format', `不支持的转换：${inExt} → ${outExt}`, `.${inExt} 只能出 ${FORMAT_MATRIX[fam].outputs.join('/')}；不写输出路径时默认出 pdf`);
   if (abs(input) === abs(output)) die('invalid-output', '输入与输出是同一个文件', '装置按设计拒绝原地覆盖，请另给输出路径');
+  if (positional[1] && fs.existsSync(output)) die('invalid-output', `输出已存在，绝不覆盖：${output}`, '换个输出路径，或省略让装置落 _out 自动去重');
   let noteSheetProbe = null;
   const kitArgs = ['convert', '--input', input, '--output', output];
   if (flags.sheet) kitArgs.push('--sheet', flags.sheet);
@@ -7109,6 +7110,26 @@ async function cmdSelftest(args) {
     const text = JSON.stringify(j);
     const absolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|(?:^|[\s"'(])\/(?:home|Users|tmp|var|opt|etc|usr|mnt|root)\/)/;
     if (text.includes(marker) || absolutePath.test(text)) return 'doctor 输出包含注入的本机路径或其它绝对路径';
+    return true;
+  });
+
+  t('安装器与基线台输出不回显绝对路径（粘贴到公开 issue 不泄用户名）', () => {
+    // 与 doctor 那条同尺：注入 marker 路径，看四处输出里有没有绝对路径形状；占位符（%USERPROFILE% 等）允许。
+    const marker = `installer-private-path-${stamp()}`;
+    const home = path.join(TMP_DIR, marker, 'home');
+    fs.mkdirSync(path.join(home, '.codex', 'skills'), { recursive: true });
+    const env = Object.assign({}, process.env, { USERPROFILE: home, HOME: home });
+    const RUN = (script, args) => { const p = spawnSync(process.execPath, [ROOT + script, ...args], { encoding: 'utf8', cwd: ROOT, env, timeout: 60000 }); return String(p.stdout || '') + '\n' + String(p.stderr || ''); };
+    const outs = [
+      RUN('/install-skill.js', ['--list']),
+      RUN('/setup.js', ['--list']),
+      RUN('/test/char-baseline.js', ['check']),
+      RUN('/install-system-deps.js', ['--list']),
+    ];
+    const text = outs.join('\n');
+    const absolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|(?:^|[\s"'(])\/(?:home|Users|tmp|var|opt|etc|usr|mnt|root)\/)/;
+    if (text.includes(marker) || absolutePath.test(text)) return '安装器/基线输出包含注入的本机路径或其它绝对路径';
+    if (!text.includes('%USERPROFILE%') && !text.includes('<REPO>')) return '占位符丢了（输出里既无绝对路径也无占位，疑似输出被掏空）';
     return true;
   });
 
