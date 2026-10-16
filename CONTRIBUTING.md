@@ -24,6 +24,8 @@ node test\dep-set.js lint          :: 依赖缺失态注册表秒级校验
 node test\mutant.js --public
 ```
 
+（Windows PowerShell 若因执行策略拦 `npm`，改直调 `node test/installers-args.js`，同一件事。）
+
 - `selftest` 必须全绿（公开树允许设计内 SKIP，见 README 说明）。
 - 加变异例必须同步改 `README.md` 里的 `变异例数=<N>` 与编号区间（`selftest` 的文档卫生判据会机器核对，漂移就红）。
 - 升版本时同步改 `dockit.js` 的 `VERSION`、头注版本行、`package.json`、`package-lock.json`、`README.md` 版本行。

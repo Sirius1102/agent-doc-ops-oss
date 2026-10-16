@@ -153,7 +153,30 @@ try {
   assert.equal(j(sd).items.length, 5);
   assert.equal(ABS_RE.test(sd.output), false);
 
-  console.log(JSON.stringify({ ok: true, tests: 18 }));
+  // T19：缺字体源 → missing-source（含 code/next 契约）
+  const fsr = run('install-fonts.js', ['--source', path.join(cwd, 'no-such-font-source')]);
+  assert.equal(fsr.exit, 1);
+  assert.equal(j(fsr).code, 'missing-source');
+  assert.ok(typeof j(fsr).next === 'string' && j(fsr).next.length > 0);
+
+  // T20：清单不可读 → missing-manifest（含 code/next 契约）
+  const fmm = run('install-fonts.js', ['--list'], { DOCKIT_FONT_MANIFEST: path.join(cwd, 'no-such-manifest.json') });
+  assert.equal(fmm.exit, 1);
+  assert.equal(j(fmm).code, 'missing-manifest');
+  assert.ok(typeof j(fmm).next === 'string' && j(fmm).next.length > 0);
+
+  // T21：四件安装器 --help/--version 只读面（用法与版本号，零副作用）
+  for (const [script, op] of [['setup.js', 'setup'], ['install-skill.js', 'install-skill'], ['install-fonts.js', 'install-fonts'], ['install-system-deps.js', 'install-system-deps']]) {
+    const h = j(run(script, ['--help']));
+    assert.equal(h.ok, true);
+    assert.equal(h.op, op);
+    assert.ok(typeof h.usage === 'string' && h.usage.includes('--'));
+    const v = j(run(script, ['--version']));
+    assert.equal(v.ok, true);
+    assert.equal(v.version, require(path.join(root, 'package.json')).version);
+  }
+
+  console.log(JSON.stringify({ ok: true, tests: 21 }));
 } finally {
   fs.rmSync(cwd, { recursive: true, force: true });
 }

@@ -45,6 +45,21 @@ function copyDir(src, dst) {
   }
 }
 
+// 拷贝完整性：临时目录里的相对路径集合必须与源逐项一致（只验 SKILL.md 等于"装了个壳就敢换名"）。
+function assertCopied(src, tmp) {
+  const list = (d, base) => {
+    const out = [];
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name), rel = path.relative(base, p);
+      if (e.isDirectory()) out.push(...list(p, base));
+      else out.push(rel);
+    }
+    return out.sort();
+  };
+  const a = list(src, src), b = list(tmp, tmp);
+  if (a.length !== b.length || a.some((x, i) => x !== b[i])) throw new Error(`复制不完整：源 ${a.length} 件、临时目录 ${b.length} 件`);
+}
+
 function pruneBackups(dir, base) {
   // .bak 保留策略：只留最近 3 个旧备份，多出的在本次成功安装后清理（重复执行不无限堆）。
   let olds = [];
@@ -53,6 +68,9 @@ function pruneBackups(dir, base) {
 }
 
 function main(argv) {
+  const PKG_VERSION = (() => { try { return require('./package.json').version; } catch { return 'unknown'; } })();
+  if (argv.includes('--help')) { console.log(JSON.stringify({ ok: true, op: 'install-skill', usage: 'node install-skill.js [--dir <目录>] [--list]' })); return; }
+  if (argv.includes('--version')) { console.log(JSON.stringify({ ok: true, op: 'install-skill', version: PKG_VERSION })); return; }
   const a = { list: false, dir: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--list') a.list = true;
@@ -90,6 +108,7 @@ function main(argv) {
   try {
     copyDir(SRC, tmp);
     if (!fs.existsSync(path.join(tmp, 'SKILL.md'))) throw new Error('临时目录里没有 SKILL.md（复制不完整）');
+    assertCopied(SRC, tmp);
     if (backedUp) fs.renameSync(dst, backedUp);
     if (fs.existsSync(dst)) fs.rmSync(dst, { recursive: true, force: true });
     fs.renameSync(tmp, dst);

@@ -36,6 +36,9 @@ function isAdmin() {
 }
 
 function main(argv) {
+  const PKG_VERSION = (() => { try { return require('./package.json').version; } catch { return 'unknown'; } })();
+  if (argv.includes('--help')) { console.log(JSON.stringify({ ok: true, op: 'install-fonts', usage: 'node install-fonts.js [--list] [--check] [--source <目录>]' })); return; }
+  if (argv.includes('--version')) { console.log(JSON.stringify({ ok: true, op: 'install-fonts', version: PKG_VERSION })); return; }
   const a = { list: false, check: false, source: process.env.DOCKIT_FONT_SOURCE || null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--list') a.list = true;
@@ -52,8 +55,8 @@ function main(argv) {
     }
   }
   const man = readManifest();
-  if (man.err) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: '清单读不到：' + man.err }, null, 1)); process.exit(1); }
-  if (!Array.isArray(man.files) || !man.files.length) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: '清单里没有 files 条目' }, null, 1)); process.exit(1); }
+  if (man.err) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'missing-manifest', error: '清单读不到：' + man.err, next: '确认 test/font-manifest.json 在位可解析（可用 DOCKIT_FONT_MANIFEST 另指）' }, null, 1)); process.exit(1); }
+  if (!Array.isArray(man.files) || !man.files.length) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'empty-manifest', error: '清单里没有 files 条目', next: '先修清单再跑装载器' }, null, 1)); process.exit(1); }
 
   const fd = fontDir();
   // 哈希验证：文件名在位不等于内容正确——同名异容的字体（版本不同/被替换）会被文件名检查放过去。
@@ -75,12 +78,12 @@ function main(argv) {
   // 装载面
   const source = a.source || (man['来源'] && !/^<.+>$/.test(man['来源']) ? man['来源'] : null);
   if (!source || !fs.existsSync(source)) {
-    console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: `缺字体源：清单"来源"字段是泛化占位（公开仓不携带字体二进制）；用 --source <目录> 指向机主侧字体备份（结构 = manifest.csv 同目录的字体文件）`, missing: miss.length, manifestCount: man.files.length }, null, 1));
+    console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'missing-source', error: `缺字体源：清单"来源"字段是泛化占位（公开仓不携带字体二进制）；用 --source <目录> 指向机主侧字体备份（结构 = manifest.csv 同目录的字体文件）`, next: '用 --source <目录> 指向机主侧字体备份', missing: miss.length, manifestCount: man.files.length }, null, 1));
     process.exit(1);
   }
-  if (process.platform !== 'win32') { console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: '本装载器只支持 Windows（写系统字体目录 + HKLM 登记）；其它平台请按各发行版方式手动装' }, null, 1)); process.exit(1); }
+  if (process.platform !== 'win32') { console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'unsupported-platform', error: '本装载器只支持 Windows（写系统字体目录 + HKLM 登记）；其它平台请按各发行版方式手动装', next: '其它平台按各发行版方式手动装字体' }, null, 1)); process.exit(1); }
   const admin = isAdmin();
-  if (admin === false) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', error: '写系统字体目录需要管理员权限——用管理员身份重跑本命令', missing: miss.length }, null, 1)); process.exit(1); }
+  if (admin === false) { console.log(JSON.stringify({ ok: false, op: 'install-fonts', code: 'need-admin', error: '写系统字体目录需要管理员权限——用管理员身份重跑本命令', next: '用管理员身份重跑本命令', missing: miss.length }, null, 1)); process.exit(1); }
 
   // 装载面：复制后必须**逐条验 sha256**（清单每条都带 bytes+sha256）——同名异容的字体放过去等于没装对。
   const installed = [], stillMissing = [], failed = [], copiedHashBad = [];

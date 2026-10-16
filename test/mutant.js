@@ -251,7 +251,7 @@ const MUTANTS = [
   { id: 'M120', file: D, only: '裸树', name: '把 doctor 引擎扫描那句的 try/catch 拆掉、恢复成裸 readdirSync——node_modules 整棵不在位时必须又退化成"装置内部异常"且 checks 字段消失，裸树判据要当场点名它走了 die 分支（这正是 10-07 19:40 之后调用方实际看到的形状）', find: "  try { eng = fs.readdirSync(ROOT + '/node_modules/@deepseek-ai', { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); }\n  catch (e) { engWhy = String((e && e.code) || e); }", to: "  eng = fs.readdirSync(ROOT + '/node_modules/@deepseek-ai', { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);", mustRed: ['裸树'], msg: ['die 分支'] },
   { id: 'M121', file: D, only: 'WP-A 存在性', name: '把真件 ODT 的路径改回 gitignore 的 _probe（v1.7.1 入仓的成果被回退）——存在性判据必须点名。这条打"入仓"那一半，与 M119 打的"自产"那一半各响各的（规范 §4.4 第 7 条：冗余防线不许搭便车）', find: "    const odtReal = ROOT + '/test/fixtures/cn.odt';", to: "    const odtReal = ROOT + '/_probe/cn.odt';", mustRed: ['WP-A 存在性'], msg: ['又出现了'] },
   // ---- v1.7.2 五例：替身字体哨兵三条覆盖面（M122–M124，各打一层）＋ selftest 两处异步尾巴形状（M125 自建父目录／M126 临时根带进程号）。期望值 119→124（**改的是期望值不是松紧**——没有一条既有判据被删或放宽）。
-  { id: 'M122', file: D, only: 'substitute-fonts 哨兵', name: '把"按清单核全量"偷偷退回"只核 7 个固定名"；合成标定机器态必须发现已核数偏离清单', find: "    const miss = fm.files.filter((x) => { checked++; return !fs.existsSync(path.join(fdir, x.name)); });", to: "    const miss = SENTINELS.filter((n) => !fs.existsSync(path.join(fdir, n))).map((n) => ({ name: n }));", mustRed: ['substitute-fonts 哨兵'], msg: ['已核数不等于清单件数'] },
+  { id: 'M122', file: D, only: 'substitute-fonts 哨兵', name: '把"按清单核全量"偷偷退回"只核 7 个固定名"；合成标定机器态必须发现已核数偏离清单', find: '    for (const x of fm.files) {', to: '    for (const x of SENTINELS.map((n) => ({ name: n }))) { // M122：退回只核固定名', mustRed: ['substitute-fonts 哨兵'], msg: ['已核数不等于清单件数'] },
   { id: 'M123', file: D, only: 'substitute-fonts 哨兵', name: '把"清单标定的机器不是本机"那支的 warn 位关掉——清单是机器事实，关掉后这一支渲染成**静默 PASS**（别处克隆会被说成"替身字体全在位"）。🔴 第一版这例是**假攻击**：它改 pass 位，而 push 渲染优先级是 WARN>PASS/FAIL，warn=true 时输出一个字节都没变——台子报"未变红"才暴露，故改打可观测的 warn 位；第二版我又把锚词写成"判红"方向的短语，被"红因缺失"当场抓出（红是对的红因是错的）', find: "'全在位'}`, true);", to: "'全在位'}`, false);", mustRed: ['substitute-fonts 哨兵'], msg: ['非标定机器必须'] },
   { id: 'M124', file: D, only: 'substitute-fonts 哨兵', name: '清单不在位时把 warn 位关掉（→ 静默渲染成 PASS）——覆盖面缺口被"装作体检通过"掩盖，缺清单必须 WARN 并点名解析到的路径。同 M123 的教训：打 pass 位是假攻击，这里打 warn 位', find: " 在位`), absent.length === 0);", to: " 在位`), false);", mustRed: ['substitute-fonts 哨兵'], msg: ['清单缺失必须是'] },
   { id: 'M125', file: D, only: 'WP-A 存在性', name: '删掉惰性 ODT 夹具写入点的自建父目录——套件收尾后才首次访问 mk-odt 时会抛 ENOENT，被顶层兜成 die 信封把整轮 selftest 的 JSON 顶掉（覆盖率闸因此只看到 failed=undefined；2026-10-09 实犯）；静态形状判据必须点名', find: "    fs.mkdirSync(path.dirname(p), { recursive: true });\n", to: '', mustRed: ['WP-A 存在性'], msg: ['自建父目录'] },
@@ -437,6 +437,7 @@ const MUTANTS = [
   { id: 'M265', file: D, only: 'redact 真涂黑', name: '括号感知切分换回旧非贪婪正则（字符串字面量 TARGET 的 ET 截断复现＝删块边界失配，v2.7.0 起的老缺陷）', find: '        for (const [bs, be] of findTextBlocks(s).reverse()) {', to: '        for (const bs of [0]) { const be = s.length; void findTextBlocks;', mustRed: ['redact 真涂黑'], msg: ['该留的文字也弄丢了'] },
   { id: 'M266', file: D, only: 'redact 真涂黑', name: '--dry-run 试运行分支摘掉（预览变真跑＝删字画框落盘，试运行零写入形状复辟）', find: '    if (dryRun) {', to: '    if (false) { // M266：试运行分支摘掉', mustRed: ['redact 真涂黑'], msg: ['dry-run 正向没跑通'] },
   { id: 'M267', file: 'install-skill.js', only: '安装器与基线台输出不回显绝对路径', name: '路径占位摘掉（最长前缀折叠不跑＝输出回吐裸绝对路径，粘贴即泄用户名）', find: '  if (cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', to: '  if (false && cands.length) { cands.sort((a, b) => b[0].length - a[0].length); s = cands[0][1] + s.slice(cands[0][0].length); }', mustRed: ['安装器与基线台输出不回显绝对路径'], msg: ['绝对路径'] },
+  { id: 'M268', file: D, only: 'substitute-fonts', name: '字体哈希比对摘掉（同名异容照绿＝"核全量"是空话，doctor 全绿≠字体正确）', find: '        if (!h || h.toLowerCase() !== String(x.sha256).toLowerCase()) badHash.push(x.name);', to: '        if (false) badHash.push(x.name); // M268：哈希比对摘掉', mustRed: ['substitute-fonts 哨兵按登记清单核全量'], msg: ['同名异容没判红'] },
 ];
 
 const argv = process.argv.slice(2);
@@ -446,7 +447,7 @@ const requestedIds = argv.filter((a) => /^M\d+$/.test(a));
 const unknownArgs = argv.filter((a) => a !== '--public' && !/^M\d+$/.test(a));
 const unknownIds = requestedIds.filter((id) => !MUTANTS.some((m) => m.id === id));
 if (unknownArgs.length || unknownIds.length) {
-  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M267）' }, null, 1));
+  console.log(JSON.stringify({ ok: false, code: 'invalid-mutant-args', unknown: [...unknownArgs, ...unknownIds], next: '使用 --list、--public 或已登记的变异编号（M1–M268）' }, null, 1));
   process.exit(2);
 }
 const requested = requestedIds.length ? MUTANTS.filter((m) => requestedIds.includes(m.id)) : MUTANTS;

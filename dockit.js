@@ -1606,10 +1606,23 @@ function cmdDoctor(args) {
     push('substitute-fonts-present', true, `清单标定于非本机（标定机器名不回显）→ 只 WARN 不判红（${fm.files.length} 件是标定机器的字体登记集，别处不该拿它当门）；本机 7 个通用替身名：${absent.length ? '缺 ' + absent.join(', ') : '全在位'}`, true);
   } else {
     let checked = 0;
-    const miss = fm.files.filter((x) => { checked++; return !fs.existsSync(path.join(fdir, x.name)); });
-    push('substitute-fonts-present', miss.length === 0, miss.length
+    const miss = [];
+    const badHash = [];
+    for (const x of fm.files) {
+      checked++;
+      const p = path.join(fdir, x.name);
+      if (!fs.existsSync(p)) { miss.push(x); continue; }
+      // P0-2（发布前审查实抓）：只核在位不验哈希＝同名异容照绿。凡清单记了 sha256 的件逐件实算比对。
+      if (x.sha256) {
+        let h = null;
+        try { h = sha256(fs.readFileSync(p)); } catch {}
+        if (!h || h.toLowerCase() !== String(x.sha256).toLowerCase()) badHash.push(x.name);
+      }
+    }
+    const hashPart = badHash.length ? `；哈希错 ${badHash.length}（同名异容，清单对不上盘上字节）：${badHash.slice(0, 8).join(', ')}${badHash.length > 8 ? ' …' : ''}（用 install-fonts --source 重装对版字体后复验）` : '';
+    push('substitute-fonts-present', miss.length === 0 && badHash.length === 0, (miss.length
       ? `缺 ${miss.length}/${fm.files.length}（已核 ${checked}）: ${miss.slice(0, 8).map((x) => x.name).join(', ')}${miss.length > 8 ? ' …' : ''}（声明这些族的文档版式会变；按 README 配置字体源后复验；真实差异跑 node test/font-baseline.js check）`
-      : `${fm.files.length}/${fm.files.length} 在位（已核 ${checked}）`);
+      : `${fm.files.length}/${fm.files.length} 在位（已核 ${checked}）`) + hashPart);
   }
   const vcr = vcRedistPresent();
   push('msvc-v14-redist', vcr.found, vcr.found ? 'VC++ v14 运行库在位' : '未找到 VC++ v14 运行库（kit 的 Windows 原生引擎需要它，见 README 使用限制）');
@@ -2963,8 +2976,11 @@ function cmdHelp(args) {
   if (flags.brief === true) {
     // v3.1.0：首读索引——命令名＋一句话＋是否写盘（writes），每条一行、≈4.5 KB。
     // 写盘清单 = 第一时间决定"产物落哪"的最小集合（redact/edit/gc 这类"写错不可见"的命令一眼可辨）。
-    const WRITES = { to: true, pages: true, ocr: true, recalc: true, scrub: true, edit: true, merge: true, media: true, batch: true, combine: true, split: true, pdftext: true, pageops: true, pipeline: true, markdown: true, pdfform: true, redline: true, redact: true, tables: true, frommd: true, compress: true, sheetop: true, gc: true };
-    out({ ok: true, op: 'help', mode: 'brief', version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), commands: Object.keys(HELP_SPEC).map((k) => ({ command: k, summary: HELP[k].split('。')[0].split('：')[0].slice(0, 70), writes: !!WRITES[k], detail: `help ${k}` })) });
+    // 值 true＝落产物；字符串＝有写盘动作但须点名的例外（writes 仍 false，另出 writesNote）——
+    // inspect 的 --deep 经临时 PDF 中转（用完即删，不落产物），它与 verify 的 TMP 中转同族：
+    // 中转不算写盘，但调用方有权知道这一半。
+    const WRITES = { to: true, pages: true, ocr: true, recalc: true, scrub: true, inspect: '--deep 经临时 PDF 中转（用完即删，不落产物）', edit: true, merge: true, media: true, batch: true, combine: true, split: true, pdftext: true, pageops: true, pipeline: true, markdown: true, pdfform: true, redline: true, redact: true, tables: true, frommd: true, compress: true, sheetop: true, gc: true };
+    out({ ok: true, op: 'help', mode: 'brief', version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), commands: Object.keys(HELP_SPEC).map((k) => ({ command: k, summary: HELP[k].split('。')[0].split('：')[0].slice(0, 70), writes: WRITES[k] === true, ...(typeof WRITES[k] === 'string' ? { writesNote: WRITES[k] } : {}), detail: `help ${k}` })) });
     return;
   }
   if (flags.json === true) {
@@ -7086,6 +7102,19 @@ async function cmdSelftest(args) {
     else if (/^FAIL /.test(row2)) bad.push('🔴 清单标定的机器不是本机却判红了（机器特定数据当普适断言——第八节第 20 条同族）：' + row2.slice(0, 160));
     else if (!/^WARN /.test(row2)) bad.push('非标定机器必须 WARN，实为：' + row2.slice(0, 140));
     else if (!/非本机/.test(row2)) bad.push('WARN 行没自报「非本机」（看不出是"机器不对"还是"清单不对"）：' + row2.slice(0, 160));
+    // ④ 同名异容：清单 sha256 被改掉一位 → 必须 FAIL 并点名文件（只核在位不验哈希＝"核全量"是空话；P0-2）。
+    //    单一条目合成清单指着必定在位的 arial.ttf，不依赖 146 件在目标机器齐。
+    const arial = path.join(fdir, 'arial.ttf');
+    if (!fs.existsSync(arial)) bad.push('连 arial.ttf 都不在系统字体目录——本机不适合跑哈希面（Windows 必带件缺失，先修环境）');
+    else {
+      const poisonPath = path.join(S, 'font-manifest-poison.json');
+      fs.writeFileSync(poisonPath, JSON.stringify({ 标定机器: process.env.COMPUTERNAME || '', files: [{ name: 'arial.ttf', sha256: '00' }] }), 'utf8');
+      const dp = DOC({ DOCKIT_FONT_MANIFEST: poisonPath });
+      const rowp = lineOf(dp.j);
+      if (!dp.j) bad.push('同名异容态的 doctor 没出 JSON：' + String(dp.p.stdout || dp.p.stderr || '(空)').slice(0, 120));
+      else if (!/^FAIL /.test(rowp)) bad.push('同名异容没判红（只核在位不验哈希）：' + rowp.slice(0, 160));
+      else if (!/哈希错/.test(rowp) || !rowp.includes('arial.ttf')) bad.push('同名异容没点名文件（"核全量"须报到件）：' + rowp.slice(0, 160));
+    }
     return bad.length ? bad.slice(0, 4).join(' | ') : true;
   });
 

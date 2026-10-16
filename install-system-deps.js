@@ -245,6 +245,9 @@ function fail(obj) {
 }
 
 function main(argv) {
+  const PKG_VERSION = (() => { try { return require('./package.json').version; } catch { return 'unknown'; } })();
+  if (argv.includes('--help')) { console.log(JSON.stringify({ ok: true, op: 'install-system-deps', usage: 'node install-system-deps.js --list | --dry-run [--components <csv|all>] [各组件参数] | --components <csv|all> --yes [各组件参数] [--include-vc]' })); return; }
+  if (argv.includes('--version')) { console.log(JSON.stringify({ ok: true, op: 'install-system-deps', version: PKG_VERSION })); return; }
   const a = parse(argv);
   if (a.bad) fail(a.bad);
   if (process.platform !== 'win32') fail({ code: 'unsupported-platform', error: `仅支持 Windows（当前 ${process.platform}）`, next: '换 Windows 机器跑；package.json os 已钉死 win32' });
