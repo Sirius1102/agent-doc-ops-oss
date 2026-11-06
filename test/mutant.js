@@ -448,6 +448,9 @@ const MUTANTS = [
   //      它在缺失态被洗成 kit 归因的 SKIP、名字又不在注册表 ⇒ 只有新分支能抓它（missing 为空，旧集合口径与新分支都红，
   //      但红因文本只有新分支才带「吃 kit 却未登记的」）。
   { id: 'M269', file: D, only: '依赖覆盖率闸', name: 'CI 首绿轮：把一条**不在注册表里**的静态判据改成「声明 {needs:kit} 且恒失败」——它被洗成 SKIP、不进 failed≠控制组那条路，必须由「吃 kit 却未登记」新分支抓红', find: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => VERSION.startsWith('3.'));", to: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => false, {needs:'kit'});", mustRed: ['依赖覆盖率闸'], msg: ['吃 kit 却未登记的'] },
+  // ---- v3.2.1（2026-11-06 公开版独立审查 H1）：零变化空成功闸的整体与标量覆盖面，各配一刀 ----
+  { id: 'M270', file: D, only: 'edit 零变化分类', name: '零变化空成功闸整体摘掉（后端报成功但字节没变仍回 ok:true，H1 的原始形状复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (false && workShaAfter === workShaPre) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
+  { id: 'M271', file: D, only: 'edit 零变化分类', name: '零变化闸只放行"有文本针"的请求（全标量时整段跳过，H1 的标量覆盖面缺口复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (workShaAfter === workShaPre && !Object.entries(props).every(([, v]) => SCALAR_LITERAL.test(String(v)))) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
 ];
 
 const argv = process.argv.slice(2);

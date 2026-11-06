@@ -2992,6 +2992,129 @@ function cmdHelp(args) {
   out({ ok: true, version: VERSION, kitVersion: KIT_VERSION, entry: path.relative(ROOT, __filename), commands: Object.keys(HELP).map((k) => `${k}  ${HELP[k]}`) });
 }
 
+// ---- edit 零变化分类用的最小 XML 目标定位器（只读原件；不参与正常写路径）----
+function xmlUnescNum(s) {
+  return String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&');
+}
+function xmlLocal(name) { return String(name).split(':').pop(); }
+/** set「原本已满足」的独立证明——只读**原件快照**，不读后端副本、不吃后端自报。
+ *  可证明：`text`＝目标节点内全部 `<w:t>` 去掉实体后拼接、与请求值逐字相等；
+ *          属性＝目标节点自身或直接子元素上同名 local 属性的值逐字相等。
+ *  明确不支持（proven=false）：布尔/数值标量字面值（后端常写成 `<w:b/>`/半点整数，字面值不可比）、
+ *          未知且目标里没有同名同值属性的键、非 docx（没有目标级定位器）、目标定位失败。
+ *  只有 proven=true 才允许把零变化判成 `no-change`；证明不了的一律仍是空成功（可重试一次）。 */
+function editSetAlreadySatisfied(text, node, pairs) {
+  const SCALAR = /^(true|false|yes|no|on|off|\d+(\.\d+)?)$/i;
+  const checked = [], unsupported = [], mismatch = [];
+  for (const [k0, v0] of pairs) {
+    const k = String(k0).trim(), v = String(v0);
+    if (SCALAR.test(v)) { unsupported.push(`${k}=标量字面值（标签/半点形态不可按字面比对）`); continue; }
+    if (k === 'text') {
+      const got = [];
+      xmlWalk(node, (c) => { if (xmlLocal(c.name) === 't') got.push(xmlUnescNum(text.slice(c.openEnd, c.closeStart ?? c.openEnd))); });
+      const actual = got.join('');
+      if (actual === v) checked.push({ prop: 'text', actualBytes: actual.length });
+      else mismatch.push({ prop: 'text', expectedBytes: v.length, actualBytes: actual.length });
+      continue;
+    }
+    let hit = false;
+    const scan = (n) => {
+      const at = xmlAttrsOf(text, n);
+      for (const name of Object.keys(at)) if (xmlLocal(name) === k && at[name] === v) hit = true;
+    };
+    scan(node);
+    for (const c of node.children) scan(c);
+    if (hit) checked.push({ prop: k, where: 'attr' });
+    else mismatch.push({ prop: k, expected: 'attr=' + v.length + 'B', actual: '目标节点/直接子元素没有同名同值属性' });
+  }
+  return { proven: pairs.length > 0 && unsupported.length === 0 && mismatch.length === 0 && checked.length === pairs.length, checked, unsupported, mismatch };
+}
+function xmlTagEnd(text, from) {
+  let q = null;
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i];
+    if (q) { if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'") { q = ch; continue; }
+    if (ch === '>') return i;
+  }
+  return -1;
+}
+/** 结构扫描：只记元素与偏移，不建文本节点；用于只读定位。 */
+function xmlScan(text) {
+  const root = { name: '#root', start: 0, openEnd: 0, innerStart: 0, innerEnd: text.length, end: text.length, selfClosing: false, children: [], parent: null };
+  const stack = [root];
+  let i = 0;
+  while (i < text.length) {
+    const lt = text.indexOf('<', i);
+    if (lt < 0) break;
+    if (text.startsWith('<!--', lt)) { const e = text.indexOf('-->', lt + 4); i = e < 0 ? text.length : e + 3; continue; }
+    if (text.startsWith('<![CDATA[', lt)) { const e = text.indexOf(']]>', lt + 9); i = e < 0 ? text.length : e + 3; continue; }
+    if (text.startsWith('<?', lt)) { const e = text.indexOf('?>', lt + 2); i = e < 0 ? text.length : e + 2; continue; }
+    if (text.startsWith('<!', lt)) { const e = xmlTagEnd(text, lt + 2); i = e < 0 ? text.length : e + 1; continue; }
+    if (text[lt + 1] === '/') {
+      const gt = xmlTagEnd(text, lt + 2);
+      if (gt < 0) break;
+      const name = xmlLocal(text.slice(lt + 2, gt).trim());
+      let k = stack.length - 1;
+      while (k > 0 && xmlLocal(stack[k].name) !== name) k -= 1;
+      if (k > 0) {
+        const node = stack[k];
+        node.innerEnd = lt; node.closeStart = lt; node.end = gt + 1;
+        stack.length = k;
+      }
+      i = gt + 1; continue;
+    }
+    const gt = xmlTagEnd(text, lt + 1);
+    if (gt < 0) break;
+    const raw = text.slice(lt + 1, gt);
+    const self = /\/\s*$/.test(raw);
+    const m = /^[A-Za-z_][\w.:-]*/.exec(raw);
+    if (!m) { i = gt + 1; continue; }
+    const node = { name: m[0], start: lt, openEnd: gt + 1, innerStart: gt + 1, innerEnd: gt + 1, end: gt + 1, selfClosing: self, children: [], parent: stack[stack.length - 1] };
+    node.parent.children.push(node);
+    if (!self) stack.push(node);
+    i = gt + 1;
+  }
+  return root;
+}
+function xmlAttrsOf(text, node) {
+  if (node._attrs) return node._attrs;
+  const tag = text.slice(node.start, node.openEnd);
+  const raw = tag.slice(node.name.length + 1, node.selfClosing ? tag.length - 2 : tag.length - 1);
+  const attrs = {};
+  const re = /([A-Za-z_][\w.:-]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(raw))) attrs[m[1]] = xmlUnescNum(m[3] !== undefined ? m[3] : m[4]);
+  node._attrs = attrs;
+  return attrs;
+}
+function xmlWalk(node, fn) { for (const c of node.children) { fn(c); xmlWalk(c, fn); } }
+function xmlRootOf(text) { const r = xmlScan(text); return r.children.length === 1 ? r.children[0] : r; }
+/** 路径解析：/body/p[2] 或 body/p[2]；name 不带索引且命中多个 ⇒ 二义拒绝（不许猜）。 */
+function wResolvePath(rootElem, p) {
+  if (typeof p !== 'string' || !p.trim()) return { error: '路径为空' };
+  const segs = p.trim().replace(/^\/+/, '').split('/').filter(Boolean);
+  let cur = rootElem;
+  for (let i = 0; i < segs.length; i += 1) {
+    const m = /^([A-Za-z_][\w.:-]*)(?:\[(\d+)\])?$/.exec(segs[i]);
+    if (!m) return { error: `路径段 ${segs[i]} 语法不认（只收 name 或 name[N]）`, badSegment: segs[i] };
+    const local = xmlLocal(m[1]);
+    const idx = m[2] === undefined ? null : Number(m[2]);
+    const hits = cur.children.filter((c) => xmlLocal(c.name) === local);
+    if (!hits.length) return { error: `路径 ${p}：段 ${segs[i]} 在 ${xmlLocal(cur.name)} 下不存在`, missingAt: i + 1 };
+    if (idx === null) {
+      if (hits.length > 1) return { error: `路径 ${p}：段 ${segs[i]} 命中 ${hits.length} 个（二义），请写成 ${m[1]}[1..${hits.length}]`, ambiguous: true, count: hits.length };
+      cur = hits[0];
+    } else {
+      if (idx < 1 || idx > hits.length) return { error: `路径 ${p}：段 ${segs[i]} 越界（只有 ${hits.length} 个）`, missingAt: i + 1 };
+      cur = hits[idx - 1];
+    }
+  }
+  return { node: cur };
+}
+
 /** R6 写能力（ADR-002 §三-3）：承重 1"原件只读"的守法形状——
  *  第一步必须是 **copyfile 到 _out/<名>-<UTC时间戳>-work.<ext>**，后端只碰副本；
  *  操作前后各测一次**原件** sha256，不一致立刻 `code:'failed'`（这条对账不能只信后端自报，判据自己也会重算一次）。 */
@@ -3048,15 +3171,57 @@ function cmdEdit(args) {
   }
   const workBuf = fs.readFileSync(work);
   const workShaAfter = sha256(workBuf);
+  const SCALAR_LITERAL = /^(true|false|yes|no|on|off|\d+(\.\d+)?)$/i;
   // 写后回读对账（变异台 M48 的靶）：三件独立事实——副本字节真变了、容器仍可解（CRC 逐条对账）、
   // 写进去的值在**某个 XML 部件里能自己找到**（针由装置自己从 --prop 取，不吃后端的自报）
   let entries = null, zipErr = null;
   try { entries = zipRead(workBuf); } catch (e) { zipErr = e.message; }
+  if (!entries) die('failed', `后端报了 ${op} 成功，但副本容器已经读不开：${zipErr}`, '这份副本不是可交付件；坏容器通常是后端写坏或写一半。按缺陷报出来，别拿去交付', { op: 'edit', input, workCopy: work, verify: { containerReadable: false, containerError: zipErr } });
+  // v3.15.5 A 批移植：零变化不再按"有没有文本针"决定是否放行。布尔/数字标量属性原先把针列成空，
+  // 失败闸整个跳过 ⇒ 后端静默丢属性也回 ok:true（公开版 v3.2.0 H1）。这里把**所有属性**纳入空成功判定：
+  // set 先在原件上独立回读目标节点、逐项比对请求值；证明不了（标量/未知键/非 docx/定位失败）仍按空成功处理。
+  if (workShaAfter === workShaPre) {
+    const original = { sha256Before: originalShaBefore, sha256After: originalShaAfter, bytesBefore: originalBytesBefore, bytesAfter: fs.statSync(input).size, unchanged: true };
+    let already = null;
+    if (op === 'set') {
+      const proofPairs = Object.entries(props).map(([k2, v2]) => [k2.trim(), String(v2)]);
+      try {
+        if (ext !== 'docx') already = { proven: false, checked: [], unsupported: ['非 docx：没有目标级定位器，无法独立回读目标值'], mismatch: [] };
+        else {
+          const srcText = str(zipRead(fs.readFileSync(input)).get('word/document.xml') || '');
+          const rr = srcText ? wResolvePath(xmlRootOf(srcText), target) : { error: 'docx 缺 word/document.xml' };
+          already = rr.error
+            ? { proven: false, checked: [], unsupported: ['原件目标定位失败：' + rr.error], mismatch: [] }
+            : editSetAlreadySatisfied(srcText, rr.node, proofPairs);
+        }
+      } catch (e) {
+        already = { proven: false, checked: [], unsupported: ['原件回读失败：' + e.message], mismatch: [] };
+      }
+    }
+    if (op === 'set' && already && already.proven) {
+      die('failed', `set 零变化，但独立回读原件证明目标 ${target} 的全部请求值原本已满足——合法 no-op（不是空成功）`, '目标已是期望值，无需重试；本次没有产物变化，也没有可交付的改件。若要确认，复查目标路径与请求值即可', {
+        op: 'edit', input, workCopy: work, original, failureKind: 'no-change', retryable: false, alreadySatisfied: already,
+        verify: { containerReadable: true, workChanged: false, alreadySatisfied: true },
+        retry: { allowed: false, maxRetries: 0, reason: 'no-change' },
+      });
+    }
+    if (op === 'add' || op === 'set') {
+      const why = op === 'set'
+        ? `，且独立回读无法证明请求值原本已满足（${(already && (already.unsupported[0] || (already.mismatch[0] && already.mismatch[0].prop))) || '证据不足'}）`
+        : '';
+      die('failed', `后端报了 ${op} 成功，但副本字节与输入完全相同（空成功或无变化${why}）——没有可验证的编辑结果`, `后端报成功但未落盘：请从已核验的原输入新建工作副本重试一次（不得复用本次失败副本）；重试前复核原件 sha256=${originalShaBefore}；再次空成功按失败处理，不要继续重试`, {
+        op: 'edit', input, workCopy: work, original, failureKind: 'backend-empty-success', retryable: true,
+        alreadySatisfied: already,
+        verify: { containerReadable: true, workChanged: false },
+        retry: { allowed: true, maxRetries: 1, requiresNewWorkCopyFromInput: true, recheckInputSha256: originalShaBefore, onSecondEmptySuccess: 'failed' },
+      });
+    }
+    die('failed', `后端报了 ${op} 成功，但副本字节与输入完全相同（空成功或无变化）——没有可验证的编辑结果`, '确认目标与属性名；若确为无变化，请显式说明这是 no-op，而不是把后端 success 当已改好', { op: 'edit', input, workCopy: work, verify: { containerReadable: true, workChanged: false } });
+  }
   // 🔴 写后回读对账：针＝**所有属性值**，但布尔/纯数字值例外（`bold=true` 被后端写成标签 `<w:b/>`、`size=14` 写成半点整数，
   //  拿字面值当针必然假阴）。例外那一部分不许静默跳过——列进 verify.notValueChecked 自报"这一面没测"。
   // 未知属性名（如 zzz=NOTAPROP_888）的值属于"要找的那一类"，找不到 ⇒ 后端把它**静默丢弃**了（实测它回 退码 2 + success:true），
   //  装置因此必须报 failed，不许交付一份什么都没改的副本（M48 的靶）。
-  const SCALAR_LITERAL = /^(true|false|yes|no|on|off|\d+(\.\d+)?)$/i;
   const unesc = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&');
   const texts = entries ? [...entries].map(([n, d]) => [n, unesc(str(d))]) : [];
   const pairs = Object.entries(props).map(([k, v]) => [k.trim(), String(v)]);
@@ -6322,6 +6487,43 @@ async function cmdSelftest(args) {
         const x = CLI2(args);
         if (!x.j || x.j.code !== want || x.p.status !== 1) bad.push(`${label}：期望 ${want}+退码1，实得 ${JSON.stringify(x.j && x.j.code)}+${x.p.status}`);
       }
+      return bad.length ? bad.slice(0, 6).join(' | ') : true;
+    } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
+  });
+
+  t('edit 零变化分类：全标量也走空成功闸（H1），set 已满足才判 no-change、证明不了仍是可重试空成功', () => {
+    const fake = path.join(ROOT, 'test', 'fake-officecli.js');
+    if (!fs.existsSync(fake)) return 'skip（test/fake-officecli.js 不在位，零变化分类测不了）';
+    const S = path.join(TMP_DIR, `r6zero-${stamp()}`); fs.mkdirSync(S, { recursive: true });
+    try {
+      const doc = path.join(S, 'zero.docx');
+      fs.writeFileSync(doc, docx('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>ALREADY</w:t></w:r></w:p></w:body></w:document>'));
+      const env = {
+        DOCKIT_OFFICECLI: process.execPath,
+        DOCKIT_FAKE_OFFICECLI: '1',
+        DOCKIT_FAKE_OFFICECLI_EXE: process.execPath,
+        NODE_OPTIONS: '--require=' + fake,
+      };
+      const bad = [];
+      const z = CLI2(['edit', doc, 'set', '/body/p[1]', '--prop', 'zzz=123'], env);
+      if (!z.j) return '假后端 edit 没出 JSON：' + String(z.p.stdout || z.p.stderr).slice(0, 160);
+      if (z.j.ok === true) bad.push('全标量属性零变化仍回 ok:true（标量路径绕过空成功闸）');
+      else {
+        if (z.j.code !== 'failed') bad.push('零变化全标量的码应为 failed，实为 ' + JSON.stringify(z.j.code));
+        if (z.j.failureKind !== 'backend-empty-success') bad.push('零变化全标量的 failureKind 应为 backend-empty-success，实为 ' + JSON.stringify(z.j.failureKind));
+        if (z.j.retryable !== true) bad.push('空成功必须 retryable=true，实为 ' + JSON.stringify(z.j.retryable));
+        if (!(z.j.verify && z.j.verify.workChanged === false)) bad.push('空成功的 verify.workChanged 必须为 false：' + JSON.stringify(z.j.verify));
+        if (!(z.j.retry && z.j.retry.maxRetries === 1 && z.j.retry.requiresNewWorkCopyFromInput === true)) bad.push('空成功的 retry 口径必须为每点一次且换新副本：' + JSON.stringify(z.j.retry));
+      }
+      const a = CLI2(['edit', doc, 'set', '/body/p[1]', '--prop', 'text=ALREADY'], env);
+      if (!a.j || a.j.ok === true) bad.push('set 已满足却回 ok:true（no-change 必须显式失败）');
+      else {
+        if (a.j.failureKind !== 'no-change') bad.push('已满足案的 failureKind 应为 no-change，实为 ' + JSON.stringify(a.j.failureKind));
+        if (a.j.retryable !== false) bad.push('no-change 必须 retryable=false，实为 ' + JSON.stringify(a.j.retryable));
+        if (!(a.j.alreadySatisfied && a.j.alreadySatisfied.proven === true && Array.isArray(a.j.alreadySatisfied.checked) && a.j.alreadySatisfied.checked.length)) bad.push('no-change 缺原件独立回读证明：' + JSON.stringify(a.j.alreadySatisfied));
+      }
+      const m = CLI2(['edit', doc, 'set', '/body/p[1]', '--prop', 'text=OTHER'], env);
+      if (!m.j || m.j.failureKind !== 'backend-empty-success' || m.j.retryable !== true) bad.push('set 目标值不匹配时仍必须回到可重试空成功，实为 ' + JSON.stringify(m.j && { failureKind: m.j.failureKind, retryable: m.j.retryable }));
       return bad.length ? bad.slice(0, 6).join(' | ') : true;
     } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
   });
