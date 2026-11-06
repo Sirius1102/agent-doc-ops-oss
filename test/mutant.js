@@ -458,6 +458,8 @@ const MUTANTS = [
   { id: 'M274', file: D, only: 'kit stderr 噪声', name: '把 stderr 重新拼进 JSON 解析（stderr 一句 warning 就判成功转换失败）', find: 'const out = parseJson(stdoutText);', to: 'const out = parseJson(stdoutText + stderrText);', mustRed: ['kit stderr 噪声'], msg: ['stdout 合法且产物已落盘却报失败'] },
   // ---- v3.2.1 公开审查 L1：ZIP magic 前的 0–3 字节长度守卫（四处命令共用同一个 helper）----
   { id: 'M275', file: D, only: '短文件长度守卫', name: '摘掉 ZIP magic 前的长度守卫（0–3 B 文件退回 RangeError 装置内部异常）', find: "if (buf.length < 4) die('invalid-document'", to: "if (false && buf.length < 4) die('invalid-document'", mustRed: ['短文件长度守卫'], msg: ['仍是长度越界异常'] },
+  // ---- v3.2.1 公开审查 L2：cmdTo 对 kit 回报落点的存在性自证（merge 同款）----
+  { id: 'M276', file: D, only: 'to 的 kit 落点自证', name: '摘掉落点存在性自证（kit 报 outputPath 但没写文件时退回 ENOENT 内部异常）', find: 'if (!fs.existsSync(claimedOut)) die(', to: 'if (false && !fs.existsSync(claimedOut)) die(', mustRed: ['to 的 kit 落点自证'], msg: ['仍被兜成内部异常'] },
 ];
 
 const argv = process.argv.slice(2);

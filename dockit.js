@@ -1783,7 +1783,12 @@ function cmdTo(args) {
     }
   }
   if (!r.ok) die(r.code, r.error, nextFor(r.code, { input, output, fam, inExt }));
-  out({ ok: true, op: 'convert', ms: r.ms, backend: r.backend, sheetProbe: noteSheetProbe || undefined, input: { path: input, bytes: fs.statSync(input).size, sha256: sha256(fs.readFileSync(input)) }, output: { path: r.outputPath, bytes: fs.statSync(r.outputPath).size, sha256: sha256(fs.readFileSync(r.outputPath)) }, missingFonts: r.missingFonts, declaredFamilies: declaredFromInput(input), warnings: warnings.length ? warnings : undefined, stderr: r.stderr || undefined, inputRepair: inputRepair || undefined, note: r.missingFonts?.length ? 'missingFonts 非空＝文档声明了本机没有的字体族，版式可能与原件不同；PDF 再渲染不报缺字属正常' : undefined });
+  // L2：先确认后端报的落点真的存在，再把它放进回报（与 merge 同款）。kit 没回 outputPath 或文件没落盘时，
+  // 旧写法会在回报对象字面量里抛 ENOENT/TypeError，被入口兜成"装置内部异常"——那会把后端的谎报当成装置缺陷。
+  const claimedOut = r.outputPath ? abs(String(r.outputPath)) : null;
+  if (!claimedOut) die('invalid-output', `后端报成功，但结果里没有 outputPath——装置不替它猜产物落在哪`, '别用这次结论；把这条当装置缺陷报出来（落点核对没通过），不要换个路径重试');
+  if (!fs.existsSync(claimedOut)) die('invalid-output', `后端报成功，但装置报的输出路径不存在：${claimedOut}`, '别用这次结论；把这条当装置缺陷报出来（落点核对没通过），不要换个路径重试');
+  out({ ok: true, op: 'convert', ms: r.ms, backend: r.backend, sheetProbe: noteSheetProbe || undefined, input: { path: input, bytes: fs.statSync(input).size, sha256: sha256(fs.readFileSync(input)) }, output: { path: claimedOut, bytes: fs.statSync(claimedOut).size, sha256: sha256(fs.readFileSync(claimedOut)) }, missingFonts: r.missingFonts, declaredFamilies: declaredFromInput(input), warnings: warnings.length ? warnings : undefined, stderr: r.stderr || undefined, inputRepair: inputRepair || undefined, note: r.missingFonts?.length ? 'missingFonts 非空＝文档声明了本机没有的字体族，版式可能与原件不同；PDF 再渲染不报缺字属正常' : undefined });
 }
 
 function nextFor(code, ctx) {
@@ -6606,6 +6611,33 @@ async function cmdSelftest(args) {
     } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
   });
 
+  t('to 的 kit 落点自证：outputPath 缺失或文件没落盘都判 invalid-output＋next，不许抛内部异常', () => {
+    const S = path.join(TMP_DIR, `l2out-${stamp()}`); fs.mkdirSync(S, { recursive: true });
+    try {
+      const genFake = (name, body) => { const f = path.join(S, name); fs.writeFileSync(f, body); return f; };
+      const noPath = genFake('kit-nopath.js', [
+        "const a=process.argv.slice(2);",
+        "process.stdout.write(JSON.stringify({ok:true,missingFonts:[]})+'\\n');",
+      ].join('\n'));
+      const notWritten = genFake('kit-noout.js', [
+        "const a=process.argv.slice(2);",
+        "const i=a.indexOf('--output');",
+        "process.stdout.write(JSON.stringify({ok:true,outputPath:i>=0?a[i+1]:null,missingFonts:[]})+'\\n');",
+      ].join('\n'));
+      const input = path.join(S, 'in.docx');
+      fs.writeFileSync(input, docx('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>L2</w:t></w:r></w:p></w:body></w:document>'));
+      const bad = [];
+      for (const [label, fake] of [['缺 outputPath', noPath], ['outputPath 指向没写的文件', notWritten]]) {
+        const out = path.join(S, label === '缺 outputPath' ? 'a.pdf' : 'b.pdf');
+        const r = CLI2(['to', input, out], { DOCKIT_KIT_CLI: fake });
+        if (!r.j) { bad.push(`${label} 没出 JSON：${String(r.p.stdout || r.p.stderr).slice(0, 120)}`); continue; }
+        if (r.j.code !== 'invalid-output') bad.push(`${label} 的 code=${JSON.stringify(r.j.code)}（期望 invalid-output）`);
+        if (typeof r.j.next !== 'string' || !r.j.next.trim()) bad.push(`${label} 没给可执行 next`);
+        if (/装置内部异常|ENOENT|TypeError/.test(String(r.j.error || ''))) bad.push(`${label} 仍被兜成内部异常：${String(r.j.error).slice(0, 80)}`);
+      }
+      return bad.length ? bad.slice(0, 5).join(' | ') : true;
+    } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
+  });
   t('后端调用审计：每一次真起子进程调后端都必须落一行自报 env 与二进制前后哈希的审计，没起子进程的路径一行都不许多写', () => {
     const bad = [];
     const srcAll = str(fs.readFileSync(__filename));
