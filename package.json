@@ -1,6 +1,6 @@
 {
   "name": "agent-doc-ops",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "private": true,
   "description": "本机文档操作装置：为 @deepseek-ai/libreoffice-kit 提供统一 CLI 与 JSON 入口，支持 Agent 通过命令行集成",
   "license": "MIT",

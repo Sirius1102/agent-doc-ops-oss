@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * dockit.js — 本机文档操作装置（项目：Agent文档操作）
- * 版本：v3.2.2（版本号同步面：package.json / 本文件 VERSION / README 版本行）
+ * 版本：v3.2.3（版本号同步面：package.json / 本文件 VERSION / README 版本行）
  *
  * 职责：把 @deepseek-ai/libreoffice-kit 的预编译 LibreOffice 引擎包成「绝对路径 + 一条命令 + 一份 JSON」，
  *       让可运行 Node 命令的 Agent 按 CLI/JSON 契约集成，安全地转换、渲染、重算、体检 Office 文档，
@@ -16,7 +16,7 @@
  */
 
 //#region 配置 / 常量区
-const VERSION = '3.2.2';
+const VERSION = '3.2.3';
 const KIT_VERSION = '0.1.5';            // 本仓锁定版本；升级需单独验证
 const ROOT = __dirname;
 const KIT_CLI = ROOT + '/node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js';
@@ -1974,6 +1974,7 @@ function cmdPages(args) {
 
 function listSheets(input, method) {
   const buf = fs.readFileSync(input);
+  if (buf.length < 4) return { names: [], method: 'error', via: '短文件守卫', code: 'invalid-document', error: `输入文件过短（${buf.length} B）：连 ZIP 头 4 字节都不够，不可能解析出工作表`, next: '确认文件没有被截断或下错（0～3 B 的假件）；重新导出一份 xlsx/ods 再试；invalid-document 表示输入坏了，不是装置缺陷' };
   if (method !== 'render' && buf.readUInt32LE(0) === 0x04034b50) {
     try {
       const map = zipRead(buf);
@@ -2002,7 +2003,7 @@ function cmdSheets(args) {
   const input = abs(positional[0]); if (!fs.existsSync(input)) die('invalid-document', `输入不存在：${positional[0]}`, '给绝对路径');
   if (!['xls', 'xlsx', 'ods'].includes(extOf(input))) die('unsupported-format', `.${extOf(input)} 不是表格族`, 'sheets 只用于 xls/xlsx/ods');
   const s = listSheets(input, flags.method || DEFAULT_SHEETS_METHOD);
-  if (s.method === 'error') die(s.code, s.error, 'sheets 的 render 路线需要表格文件可加载；OLE 二进制(.xls)若失败，先 to 转成 xlsx 再 sheets');
+  if (s.method === 'error') die(s.code, s.error, s.next || 'sheets 的 render 路线需要表格文件可加载；OLE 二进制(.xls)若失败，先 to 转成 xlsx 再 sheets');
   out({ ok: true, op: 'sheets', input, count: s.names.length, names: s.names, method: s.method, via: s.via, note: s.names.length > 1 ? '多表簿出 csv 必须 --sheet 指准确表名（kit 会拒绝静默只出第一张）' : undefined });
 }
 
@@ -8073,6 +8074,22 @@ async function cmdSelftest(args) {
         if (typeof j.next !== 'string' || !j.next.trim()) bad.push(`${cmd}/${bytes}B 没给可执行 next`);
         if (/RangeError|outside (?:the )?buffer bounds|readUInt32LE|装置内部异常/.test(String(j.error || '') + ' ' + String(p.stderr || ''))) bad.push(`${cmd}/${bytes}B 仍是长度越界异常：${String(j.error || '').slice(0, 80)}`);
       }
+    }
+    return bad.length ? bad.slice(0, 6).join(' | ') : true;
+  });
+  t('sheets 短文件守卫：0–3 B 假 xlsx 判 invalid-document＋可执行 next，不许落到"装置内部异常"（v3.2.3）', () => {
+    const short0 = `${S}/sheets-short-0.xlsx`, short3 = `${S}/sheets-short-3.xlsx`;
+    fs.writeFileSync(short0, Buffer.alloc(0));
+    fs.writeFileSync(short3, Buffer.from([0x50, 0x4b, 0x2e]));
+    const bad = [];
+    for (const f of [short0, short3]) {
+      const bytes = fs.statSync(f).size;
+      const p = spawnSync(process.execPath, [__filename, 'sheets', f], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      let j = null; try { j = JSON.parse(String(p.stdout)); } catch {}
+      if (!j) { bad.push(`${bytes}B 没出 JSON：${String(p.stdout || p.stderr).replace(/\s+/g, ' ').slice(0, 100)}`); continue; }
+      if (j.code !== 'invalid-document') bad.push(`${bytes}B 的 code=${JSON.stringify(j.code)}（期望 invalid-document）`);
+      if (typeof j.next !== 'string' || !j.next.trim()) bad.push(`${bytes}B 没给可执行 next`);
+      if (/RangeError|outside (?:the )?buffer bounds|readUInt32LE|装置内部异常/.test(String(j.error || '') + ' ' + String(p.stderr || ''))) bad.push(`${bytes}B 仍是兜底内部异常：${String(j.error || '').slice(0, 100)}`);
     }
     return bad.length ? bad.slice(0, 6).join(' | ') : true;
   });

@@ -1,9 +1,9 @@
-# Agent Doc Ops (dockit, Open Source Edition) v3.2.2
+# Agent Doc Ops (dockit, Open Source Edition) v3.2.3
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
 [![Platform](https://img.shields.io/static/v1?label=platform&message=Windows%20x64&color=blue)](#install--reproduce)
 [![Runtime](https://img.shields.io/static/v1?label=runtime&message=Node%20%3E%3D22.19&color=blue)](#install--reproduce)
-[![selftest](https://img.shields.io/static/v1?label=selftest&message=177%20checks&color=informational)](#verification)
+[![selftest](https://img.shields.io/static/v1?label=selftest&message=178%20checks&color=informational)](#verification)
 
 **Absolute path + one command + one JSON line**: a document-operations device
 for any agent on this machine, wrapping a prebuilt LibreOffice engine
@@ -71,7 +71,7 @@ flowchart LR
 A refusal is a verdict too: pre-gates (size/overwrite/encryption/format) fire
 before any unpacking or writing. No half-finished products.
 
-Version v3.2.2. Authority: this README (command surface master) + `docs/adr/`
+Version v3.2.3. Authority: this README (command surface master) + `docs/adr/`
 (key design decisions). Discipline: inputs read-only, products default to
 `_out/` (except `DOCKIT_OUT_DIR` test redirect / `_audit` ledger / gc
 quarantine), never overwrite; temp files see Operating boundaries

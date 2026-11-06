@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The public tree started at v3.0.1; entries below describe public releases only.
 `vX.Y.Z` feature work raises the Y bit, fixes raise the Z bit (X only on owner order).
 
+## v3.2.3 - 2026-11-06
+
+Closes the remaining R1 gap in the `sheets` command.
+
+- A 0–3 byte `.xlsx`/`.ods` (or any input shorter than the 4-byte ZIP
+  signature) is now rejected inside `listSheets` before `readUInt32LE` runs.
+  The command returns `code: "invalid-document"` with an executable `next`
+  instead of the generic `failed` / "装置内部异常" wrapper, so a corrupt
+  input is distinguishable from a device bug.
+- `cmdSheets` now forwards the guard's `next` to the top-level error.
+- Tests: new criterion for 0-byte and 3-byte fakes (must be
+  `invalid-document` + `next`, never `RangeError`/内部异常), and mutant M282
+  (guard disabled must go red).
+
 ## v3.2.2 - 2026-11-06
 
 Backports the private tree's `scrub --core-dates` switch (v3.15.9). Default
