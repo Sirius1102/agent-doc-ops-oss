@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 The public tree started at v3.0.1; entries below describe public releases only.
 `vX.Y.Z` feature work raises the Y bit, fixes raise the Z bit (X only on owner order).
 
+## v3.2.2 - 2026-11-06
+
+Backports the private tree's `scrub --core-dates` switch (v3.15.9). Default
+behavior is unchanged: without the new switch, `scrub` keeps
+`dcterms:created`/`dcterms:modified` in `docProps/core.xml` exactly as before.
+
+- `scrub ... [--core-dates keep|now|clear]`: `keep` (default) preserves both
+  timestamps byte-for-byte; `now` rewrites them to this run's W3CDTF time
+  (milliseconds dropped); `clear` removes both elements. `coreDates.fields`
+  reports each field's action (`kept`/`set`/`removed`/`absent`) with old and
+  new values.
+- `--verify` now rereads the product's `docProps/core.xml` and asserts each
+  field against the requested mode instead of only reporting zero residue.
+  PDF/ODF inputs with a non-`keep` mode are rejected up front.
+- Tests: three mode criteria (keep/now/clear) and mutant M281 (clear
+  implemented as "created only" must go red).
+
 ## v3.2.1 - 2026-11-06
 
 Backports the private tree's OCR direction fix (v3.15.8). Default behavior is

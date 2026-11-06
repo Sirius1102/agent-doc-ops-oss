@@ -466,6 +466,7 @@ const MUTANTS = [
   // ---- v3.2.1：OCR 方向（自 v3.15.8 私有版移植）两层各自一层牙 ----
   { id: 'M279', file: D, only: 'ocr 方向', name: '把 auto 判出的校正角强制按 0° 处理（倒置页照旧乱码却报成功）', find: `const applied = explicitRotate !== null ? explicitRotate : detected;`, to: `const applied = explicitRotate !== null ? explicitRotate : 0; // M279`, mustRed: ['ocr 方向 auto：0/90/180/270 四向合成页各自识别并校正到位（v3.2.1）'] },
   { id: 'M280', file: D, only: 'ocr 方向', name: 'OSD 缺失时不判 unavailable，静默按 0° 继续识别（假绿）', find: `if (!osd.available && explicitRotate === null) {`, to: `if (false && !osd.available && explicitRotate === null) { // M280`, mustRed: ['ocr 方向 auto：OSD 缺失判 unavailable＋degraded，不按 0° 假绿（v3.2.1）'], msg: ['OSD 缺失却回了成功'] },
+  { id: 'M281', file: D, only: 'core-dates', name: '把 clear 实现成只清 dcterms:created、dcterms:modified 原样留下（假清）', find: `        coreDates.fields.push({ field: f, action: 'removed', oldValue: ms.map((m) => m[2] ?? '').join(' | ') });\n        xml = xml.replace(coreDateRe(f), '');`, to: `        coreDates.fields.push({ field: f, action: 'removed', oldValue: ms.map((m) => m[2] ?? '').join(' | ') });\n        if (f === 'dcterms:created') xml = xml.replace(coreDateRe(f), ''); // M281`, mustRed: ['scrub --core-dates clear：两个元素整条移除且 verify 覆盖两项（v3.2.2）'] }
 ];
 
 const argv = process.argv.slice(2);

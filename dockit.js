@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * dockit.js — 本机文档操作装置（项目：Agent文档操作）
- * 版本：v3.2.1（版本号同步面：package.json / 本文件 VERSION / README 版本行）
+ * 版本：v3.2.2（版本号同步面：package.json / 本文件 VERSION / README 版本行）
  *
  * 职责：把 @deepseek-ai/libreoffice-kit 的预编译 LibreOffice 引擎包成「绝对路径 + 一条命令 + 一份 JSON」，
  *       让可运行 Node 命令的 Agent 按 CLI/JSON 契约集成，安全地转换、渲染、重算、体检 Office 文档，
@@ -16,7 +16,7 @@
  */
 
 //#region 配置 / 常量区
-const VERSION = '3.2.1';
+const VERSION = '3.2.2';
 const KIT_VERSION = '0.1.5';            // 本仓锁定版本；升级需单独验证
 const ROOT = __dirname;
 const KIT_CLI = ROOT + '/node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js';
@@ -50,6 +50,10 @@ const OCR_DEFAULT_LANG = process.env.DOCKIT_OCR_LANG || 'eng';
 // 阈值取舍与本机实测同私有版：稀疏合成页置信度 1.1–1.7 会判错，真实版面 36.9–42.3 四向全对；取 3.0 为保守下限。
 const OCR_ROTATE_CHOICES = ['auto', '90', '180', '270'];
 const OCR_OSD_MIN_CONFIDENCE = 3.0;
+// ---- v3.2.2：scrub 的 dcterms 时间（自 v3.15.9 私有版移植）。默认 keep＝旧外发结果不变；now 写本次运行时间；clear 整条移除。
+const CORE_DATE_FIELDS = ['dcterms:created', 'dcterms:modified'];
+const CORE_DATES_CHOICES = ['keep', 'now', 'clear'];
+const CORE_DATES_DEFAULT = 'keep';   // help 的 defaultFrom 只能钉裸常量名
 // OfficeCLI 写后端（ADR-002，v1.6.0 R0-b 起在册）。与 Tesseract 两个常量同形状：**配置区默认 + 环境变量覆盖**，
 // 且解析器必须做成**函数**而不是加载期常量——判据要在跑的时候把 `DOCKIT_OFFICECLI` 指到不存在的路径上，
 // 亲眼看它真的按指的路径走（"覆盖面存在但没人覆盖过"就是假牙；ADR-002 §三-4）。
@@ -188,7 +192,7 @@ const CONFIG_CONSTANTS = {
   DEFAULT_CHECK_BACKEND, MEDIA_MAX_FILES, BATCH_MAX_ITEMS, BATCH_DEFAULT_TO, BATCH_DEFAULT_CMD, PDFTEXT_DEFAULT_ENC, FROMMD_DEFAULT_TO,
   MARKDOWN_DEFAULT_WRAP, REDLINE_DEFAULT_AUTHOR, TABLES_MAX_TABLES, COMPRESS_MIN_STREAM_BYTES, REDACT_DEFAULT_FILL,
   SHEETOP_DEFAULT_COUNT, SHEETOP_MAX_SHIFT,
-  MAX_INPUT_BYTES_DEFAULT, GC_MIN_AGE_DAYS, GC_DEFAULT_DIR,
+  MAX_INPUT_BYTES_DEFAULT, GC_MIN_AGE_DAYS, GC_DEFAULT_DIR, CORE_DATES_DEFAULT,
 };
 //#endregion
 
@@ -1326,14 +1330,15 @@ const HELP_SPEC = {
     codes: ['invalid-document', 'unsupported-format', 'invalid-output', 'input-too-large', 'output-too-large', 'timeout', 'unavailable', 'failed'],
   },
   scrub: {
-    usage: 'scrub <OOXML|ODF|PDF 文件> [输出文件] [--verify]',
+    usage: 'scrub <OOXML|ODF|PDF 文件> [输出文件] [--verify] [--core-dates keep|now|clear]',
     positional: [
       { name: 'OOXML 或 ODF 文件', required: true, note: 'OOXML（docx/xlsx/pptx）清 docProps；ODF（odt/ods/odp）清 meta.xml 并删 Thumbnails/thumbnail.png；PDF（v2.5.0 起）清 /Info 目标键并摘除 XMP（/Metadata）——写新文件、非就地；OLE 前置 unsupported-format' },
       { name: '输出文件', required: false, note: '省略＝落 _out/<原名>-scrubbed.<原后缀>（PDF 面为 <原名>-scrubbed.pdf）；已存在即 invalid-output（从不覆盖）' },
     ],
     flags: [
       { name: 'max-input-bytes', type: 'int', default: 268435456, defaultFrom: 'MAX_INPUT_BYTES_DEFAULT', note: '本地解包路线的输入体积闸（整件读进内存前先量字节数）：超限回 input-too-large，不落半成品；抬限属放宽规则需机主同意，也可用环境变量 DOCKIT_MAX_INPUT_BYTES；非整数/≤0 的值直接拒（invalid-output），不静默回退默认' },
-      { name: 'verify', type: 'boolean', default: false, note: 'OOXML/ODF：转一次 PDF 后按固定探针清单回查那些串是否零残留；PDF：重装载产物做结构回查（Info 目标键 + /Metadata）并叠明文令牌扫描；漏删在这里现形，不靠"删了几个查几个"' },
+      { name: 'verify', type: 'boolean', default: false, note: 'OOXML/ODF：转一次 PDF 后按固定探针清单回查那些串是否零残留；PDF：重装载产物做结构回查（Info 目标键 + /Metadata）并叠明文令牌扫描；漏删在这里现形，不靠"删了几个查几个"。OOXML 面另回读产物 core.xml 逐项核 dcterms 时间（keep=与源值一致、clear=不存在、now=等于本次运行时间）' },
+      { name: 'core-dates', type: 'choice', choices: ['keep', 'now', 'clear'], default: 'keep', defaultFrom: 'CORE_DATES_DEFAULT', defaultNote: 'keep＝dcterms:created/modified 原样保留（默认，与旧版外发结果一致）；now＝写成这次运行的时间（W3CDTF，去毫秒）；clear＝整条移除这两个元素。只对 OOXML（docx/xlsx/pptx）有效，PDF/ODF 给了明拒；结果里的 coreDates.fields 逐项给 action/oldValue/newValue/kept；不给 --verify 也会在 coreDates 里报动作' },
     ],
     codes: ['input-too-large', 'invalid-document', 'unsupported-format', 'invalid-output', 'unavailable', 'failed'],
   },
@@ -2157,7 +2162,12 @@ function cmdScrub(args) {
   inputSizeGuard(positional[0], flags['max-input-bytes'], 'scrub'); // F6：本地解包路线的输入体积闸（默认 256 MB；--max-input-bytes／DOCKIT_MAX_INPUT_BYTES 可抬，属放宽规则）
   const input = abs(positional[0]); if (!fs.existsSync(input)) die('invalid-document', `输入不存在：${positional[0]}`, '给绝对路径');
   const buf = fs.readFileSync(input);
-  if (buf.slice(0, 5).toString('latin1') === '%PDF-') return scrubPdf(input, buf, positional, flags);   // v2.5.0：PDF 面——仅此分支返回 promise，ZIP 面保持同步（入口兜底照旧）
+  const coreDatesMode = flags['core-dates'] === undefined ? CORE_DATES_DEFAULT : String(flags['core-dates']);
+  if (!CORE_DATES_CHOICES.includes(coreDatesMode)) die('invalid-output', `--core-dates 只认 ${CORE_DATES_CHOICES.join('|')}，给了 ${JSON.stringify(coreDatesMode)}`, 'keep＝原样保留（默认，与旧版一致）；now＝把 dcterms:created/modified 写成本次运行时间；clear＝整条移除这两个元素');
+  if (buf.slice(0, 5).toString('latin1') === '%PDF-') {
+    if (coreDatesMode !== 'keep') die('invalid-output', `--core-dates ${coreDatesMode} 只对 OOXML（docx/xlsx/pptx）的 docProps/core.xml 有效，PDF 没有这两个 dcterms 元素`, 'PDF 面保持默认 keep；要清时间请对源 OOXML 先用本开关，再转 PDF');
+    return scrubPdf(input, buf, positional, flags);   // v2.5.0：PDF 面——仅此分支返回 promise，ZIP 面保持同步（入口兜底照旧）
+  }
   zipShortGuard(buf, 'scrub', ' docx/xlsx/pptx/odt/ods/odp', '先确认源文件没被截断或传坏：从原始来源重新导出／重新下载后重跑 scrub——0–3 B 的空壳不是「清完没残留」的干净件');
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'scrub 吃 OOXML/ODF 的 ZIP 容器与 PDF（v2.5.0 起）；输入按 magic 判两者都不是', 'OLE 二进制（.doc/.xls/.ppt）先 to 成新族再清；PDF 走本命令的 PDF 面（写新文件、非就地）');
   const map = zipRead(buf);
@@ -2167,6 +2177,7 @@ function cmdScrub(args) {
   const isOOXMLFam = ['docx', 'xlsx', 'pptx'].includes(scrubFam);
   const isODFFam = ['odt', 'ods', 'odp'].includes(scrubFam);
   if (!isOOXMLFam && !isODFFam) die('unsupported-format', `scrub 只支持 OOXML（docx/xlsx/pptx）与 ODF（odt/ods/odp），输入按容器识别为 ${scrubFam || '未知'}——ZIP 里没有任一族的标志部件`, '先 inspect 看容器识别结果（裸 ZIP 与伪装件都在这红）；已生成的 PDF 不许就地改字节');
+  if (coreDatesMode !== 'keep' && !isOOXMLFam) die('invalid-output', `--core-dates ${coreDatesMode} 只对 OOXML（docx/xlsx/pptx）有效；本件容器识别为 ${scrubFam || '未知'}（ODF 的时间在 meta.xml，不叫 dcterms:created/modified）`, 'ODF 保持默认 keep，或用 to 转成 OOXML 后再跑；不要指望这个开关去改 ODF 的 meta:creation-date');
   // 探针清单与删除清单**分开**：探针固定覆盖全部目标字段，删除若漏掉某个字段，--verify 仍能发现残留
   // （变异台 M3 教训：值清单若从"已删掉的"里取，漏删 = 连要回查的串都不登记 = 自证过度）
   const probeValues = [];
@@ -2174,6 +2185,36 @@ function cmdScrub(args) {
   const removedEntries = [];
   const rewrittenParts = new Set();   // D-08：被脱敏真正改写过字节的 XML 部件（产物必须逐个过 well-formedness）
   const sourceXml = new Map();        // 改写前原文，用来区分「源件本来就坏」与「装置把它改坏」
+  // v3.2.2：--core-dates 的两项单独处置（keep/now/clear），并逐项回报改了哪条、原值、新值或已移除。
+  const coreSourceText = map.has('docProps/core.xml') ? str(map.get('docProps/core.xml')) : '';
+  const coreDates = {
+    mode: coreDatesMode,
+    appliedAt: coreDatesMode === 'now' ? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') : null,
+    fields: [],
+  };
+  const coreDateRe = (f) => new RegExp(`<${f}(\\s[^>]*)?(?:\\/>|>([\\s\\S]*?)<\\/${f}>)`, 'g');
+  const coreDateState = (xml) => CORE_DATE_FIELDS.map((f) => {
+    const vals = [...xml.matchAll(coreDateRe(f))].map((m) => m[2] ?? '');
+    return { field: f, present: vals.length > 0, value: vals.length ? vals.join(' | ') : null };
+  });
+  const applyCoreDates = (name) => {
+    const data = map.get(name);
+    if (!data) { for (const f of CORE_DATE_FIELDS) coreDates.fields.push({ field: f, action: 'absent' }); return; }
+    const xml0 = str(data); let xml = xml0;
+    for (const f of CORE_DATE_FIELDS) {
+      const ms = [...xml0.matchAll(coreDateRe(f))];
+      if (!ms.length) { coreDates.fields.push({ field: f, action: 'absent' }); continue; }
+      if (coreDatesMode === 'keep') { coreDates.fields.push({ field: f, action: 'kept', value: ms.map((m) => m[2] ?? '').join(' | ') }); continue; }
+      if (coreDatesMode === 'clear') {
+        coreDates.fields.push({ field: f, action: 'removed', oldValue: ms.map((m) => m[2] ?? '').join(' | ') });
+        xml = xml.replace(coreDateRe(f), '');
+      } else {
+        coreDates.fields.push({ field: f, action: 'set', oldValue: ms.map((m) => m[2] ?? '').join(' | '), newValue: coreDates.appliedAt });
+        xml = xml.replace(coreDateRe(f), (m, attrs) => `<${f}${attrs || ''}>${coreDates.appliedAt}</${f}>`);
+      }
+    }
+    if (xml !== xml0) { if (!sourceXml.has(name)) sourceXml.set(name, xml0); map.set(name, Buffer.from(xml, 'utf8')); rewrittenParts.add(name); }
+  };
   const collect = (part, fields) => {
     const d = map.get(part); if (!d) return;
     for (const f of fields) {
@@ -2194,7 +2235,9 @@ function cmdScrub(args) {
   };
   if (isOOXMLFam) {
     for (const part of ['docProps/core.xml', 'docProps/app.xml']) collect(part, META_PROBE_FIELDS);
-    const CORE_RE = /<(dc:creator|dc:title|dc:subject|dc:description|cp:keywords|cp:lastModifiedBy|dc:date|dcterms:created|dcterms:modified|cp:revision)>([\s\S]*?)<\/\1>/g;
+    // v3.2.2：dcterms 两个时间从"永远清"的清单里拿掉，改由 --core-dates 显式处置（keep 默认原样保留）。
+    const CORE_RE = /<(dc:creator|dc:title|dc:subject|dc:description|cp:keywords|cp:lastModifiedBy|dc:date|cp:revision)>([\s\S]*?)<\/\1>/g;
+    applyCoreDates('docProps/core.xml');
     cleanPart('docProps/core.xml', CORE_RE, '');
     // D-08：元素名必须按**完整名**收口，短名不得命中同族长名的前缀（Characters ⊄ CharactersWithSpaces、
     // Words ⊄ WordsWithSpace）。旧写法 `(<name>(>text</name>)?)?` 后面那组可选，会把 <CharactersWithSpaces>
@@ -2209,7 +2252,7 @@ function cmdScrub(args) {
     // 🔴 缩略图就是文档第一页的渲染图，属于**版面内容**：LO 写出的 odt/ods/odp 都带它，不删就是把内容跟着外发件一起出去
     for (const t of ODF_THUMBNAIL_PARTS) if (map.has(t)) { map.delete(t); removedEntries.push(t); }
   }
-  if (!removed.length && !probeValues.length && !removedEntries.length) die('invalid-output', `没有可清的元数据字段（${isODFFam ? 'meta.xml 里没有目标项，包里也没有缩略图条目' : 'docProps 里没有目标项'}）`, '确认输入的容器族，或它已经被清过');
+  if (!removed.length && !probeValues.length && !removedEntries.length && !coreDates.fields.some((f) => f.action === 'removed' || f.action === 'set')) die('invalid-output', `没有可清的元数据字段（${isODFFam ? 'meta.xml 里没有目标项，包里也没有缩略图条目' : 'docProps 里没有目标项'}）`, '确认输入的容器族，或它已经被清过');
   // 保序 + 逐条目保 method：OOXML 沿用原包；ODF 必须让 mimetype 待在**首位且 stored**（规范硬要求，见 zipWrite 的注释）
   const methOf = {};
   for (const r of zipList(buf)) methOf[r.name] = r.method;
@@ -2242,6 +2285,7 @@ function cmdScrub(args) {
   const res = {
     ok: true, op: 'scrub', input, output, container: scrubFam, bytes: fs.statSync(output).size, sha256: sha256(fs.readFileSync(output)),
     removedFields: removed, removedEntries, probeFields: probeValues.map((v) => `${v.part}:${v.field}`),
+    coreDates,
     roundTrip: { entries: entries.length, bytesMatch: true, crcPerEntry: true },
     shape: { firstEntry: first ? first.name : null, firstMethod: first ? (first.method === 0 ? 'stored' : 'deflate') : null, storedEntries: entries.filter((e) => e.method === 0).length },
     note: isODFFam ? 'ODF 面：meta.xml 目标字段清空 + Thumbnails 条目删除，顺序与逐条目 method 沿用原包（mimetype 必须首位 stored）' : 'OOXML 面：docProps 目标字段删除，其余条目逐字节原样回写',
@@ -2259,6 +2303,24 @@ function cmdScrub(args) {
     };
     try { fs.rmSync(pdf, { force: true }); } catch {}
     if (!r.ok) res.verify.error = r.error;
+    // v3.2.2：--core-dates 的两项必须被 verify 直接覆盖（不能只报"残留清零"）。按开关要求回读产物 core.xml：
+    // keep 要求与源值逐字一致、clear 要求整条不存在、now 要求值等于本次运行时间（源件本来没有该元素则允许仍缺失）。
+    if (isOOXMLFam) {
+      const srcState = coreDateState(coreSourceText);
+      const outText = back.has('docProps/core.xml') ? str(back.get('docProps/core.xml')) : '';
+      const outState = coreDateState(outText);
+      const fields = CORE_DATE_FIELDS.map((f, i) => {
+        const s = srcState[i], o = outState[i];
+        let expectation, ok;
+        if (coreDatesMode === 'keep') { expectation = 'preserved'; ok = s.present === o.present && (!s.present || s.value === o.value); }
+        else if (coreDatesMode === 'clear') { expectation = 'removed'; ok = !o.present; }
+        else { expectation = s.present ? 'set-now' : 'absent-ok'; ok = s.present ? (o.present && o.value === coreDates.appliedAt) : !o.present; }
+        return { field: f, expectation, source: s, product: o, ok };
+      });
+      const cdOk = fields.every((x) => x.ok);
+      res.verify.coreDates = { mode: coreDatesMode, ok: cdOk, appliedAt: coreDates.appliedAt, fields, note: '判据：回读产物的 docProps/core.xml，按 --core-dates 的要求逐项核（keep=与源值逐字一致、clear=元素不存在、now=值等于本次运行时间）；本项与残留扫描独立' };
+      if (!cdOk) die('invalid-output', `scrub 的 --core-dates ${coreDatesMode} 产物自证不过：${fields.filter((x) => !x.ok).map((x) => x.field).join(', ')}`, '这是装置缺陷（产物里的 dcterms 时间与开关要求不符），别用这个产物，把本条当回归报出来');
+    }
   }
   out(res);
 }
@@ -8067,6 +8129,65 @@ async function cmdSelftest(args) {
     return true;
   });
   t('scrub 原件零改动（core.xml 里作者串仍在原文件）', () => { SR(); return str(zipRead(fs.readFileSync(cnPath)).get('docProps/core.xml')).includes(AUTHOR) && !str(zipRead(fs.readFileSync(scrubbed)).get('docProps/core.xml')).includes(AUTHOR); });
+  // ---- v3.2.2：scrub --core-dates 三取值（自 v3.15.9 私有版移植；模板时间带 xsi:type，旧正则正是漏在这种写法上） ----
+  const mkCoreDatesDocx = (file) => {
+    const CORE_DT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>${AUTHOR}</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">2020-04-19T00:00:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">2020-05-19T00:00:00Z</dcterms:modified></cp:coreProperties>`;
+    const CT2 = CT.replace('</Types>', '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>');
+    fs.writeFileSync(file, zipWrite([
+      { name: '[Content_Types].xml', data: Buffer.from(CT2) },
+      { name: '_rels/.rels', data: Buffer.from(RELS) },
+      { name: 'docProps/core.xml', data: Buffer.from(CORE_DT) },
+      { name: 'word/_rels/document.xml.rels', data: Buffer.from(DOCRELS) },
+      { name: 'word/document.xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${S_}><w:body><w:p><w:r><w:t>core-dates</w:t></w:r></w:p></w:body></w:document>`) },
+    ]));
+  };
+  const runCoreDates = (mode) => {
+    const fixture = `${S}/cd-${mode}.docx`, product = `${S}/cd-${mode}-out.docx`;
+    mkCoreDatesDocx(fixture); try { fs.rmSync(product, { force: true }); } catch {}
+    const p = spawnSync(process.execPath, [__filename, 'scrub', fixture, product, '--core-dates', mode, '--verify'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    let j = null; try { j = JSON.parse(String(p.stdout)); } catch { /* 下面按没读懂报红 */ }
+    return { p, j, product };
+  };
+  t('scrub --core-dates keep：模板时间原样保留（默认与旧外发结果一致，v3.2.2）', () => {
+    const { p, j, product } = runCoreDates('keep');
+    if (!j) return `scrub 没出 JSON：status=${p.status} ${kidErr(p.stdout || p.stderr)}`;
+    if (p.status !== 0 || j.ok !== true) return `keep 失败：${j.code || '?'} ${String(j.error || '').slice(0, 140)}`;
+    if (j.coreDates.mode !== 'keep') return `coreDates.mode=${j.coreDates.mode}`;
+    const f = j.coreDates.fields;
+    if (!f.every((x) => x.action === 'kept')) return `keep 的动作不是 kept：${JSON.stringify(f)}`;
+    if (f[0].value !== '2020-04-19T00:00:00Z' || f[1].value !== '2020-05-19T00:00:00Z') return `keep 报的原值不对：${JSON.stringify(f)}`;
+    const out = str(zipRead(fs.readFileSync(product)).get('docProps/core.xml'));
+    if (!out.includes('2020-04-19T00:00:00Z') || !out.includes('2020-05-19T00:00:00Z')) return 'keep 产物里模板时间丢了（原样保留失败）';
+    if (!j.verify || !j.verify.coreDates || j.verify.coreDates.ok !== true) return `verify 没覆盖或没过：${JSON.stringify(j.verify && j.verify.coreDates)}`;
+    return true;
+  }, { needs: 'kit' });
+  t('scrub --core-dates now：写成本次运行时间且 verify 覆盖两项（v3.2.2）', () => {
+    const { p, j, product } = runCoreDates('now');
+    if (!j) return `scrub 没出 JSON：status=${p.status} ${kidErr(p.stdout || p.stderr)}`;
+    if (p.status !== 0 || j.ok !== true) return `now 失败：${j.code || '?'} ${String(j.error || '').slice(0, 140)}`;
+    if (j.coreDates.mode !== 'now' || !j.coreDates.appliedAt) return `coreDates.mode/appliedAt 缺失：${JSON.stringify(j.coreDates)}`;
+    const f = j.coreDates.fields;
+    if (!f.every((x) => x.action === 'set' && x.oldValue && x.newValue === j.coreDates.appliedAt)) return `now 的逐项证据不对：${JSON.stringify(f)}`;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(j.coreDates.appliedAt)) return `appliedAt 不是 W3CDTF：${j.coreDates.appliedAt}`;
+    const out = str(zipRead(fs.readFileSync(product)).get('docProps/core.xml'));
+    if (!out.includes(`<dcterms:created xsi:type="dcterms:W3CDTF">${j.coreDates.appliedAt}</dcterms:created>`)) return 'created 没被改写（或属性丢了）';
+    if (!out.includes(`<dcterms:modified xsi:type="dcterms:W3CDTF">${j.coreDates.appliedAt}</dcterms:modified>`)) return 'modified 没被改写（或属性丢了）';
+    if (out.includes('2020-04-19T00:00:00Z') || out.includes('2020-05-19T00:00:00Z')) return 'now 产物里仍留旧模板时间';
+    if (!j.verify || !j.verify.coreDates || j.verify.coreDates.ok !== true) return `verify 没覆盖或没过：${JSON.stringify(j.verify && j.verify.coreDates)}`;
+    return true;
+  }, { needs: 'kit' });
+  t('scrub --core-dates clear：两个元素整条移除且 verify 覆盖两项（v3.2.2）', () => {
+    const { p, j, product } = runCoreDates('clear');
+    if (!j) return `scrub 没出 JSON：status=${p.status} ${kidErr(p.stdout || p.stderr)}`;
+    if (p.status !== 0 || j.ok !== true) return `clear 失败：${j.code || '?'} ${String(j.error || '').slice(0, 140)}`;
+    if (j.coreDates.mode !== 'clear') return `coreDates.mode=${j.coreDates.mode}`;
+    const f = j.coreDates.fields;
+    if (!f.every((x) => x.action === 'removed' && x.oldValue)) return `clear 的逐项证据不对：${JSON.stringify(f)}`;
+    const out = str(zipRead(fs.readFileSync(product)).get('docProps/core.xml'));
+    if (out.includes('<dcterms:created') || out.includes('<dcterms:modified')) return `clear 后仍有 dcterms 元素：${out.slice(0, 200)}`;
+    if (!j.verify || !j.verify.coreDates || j.verify.coreDates.ok !== true) return `verify 没覆盖或没过：${JSON.stringify(j.verify && j.verify.coreDates)}`;
+    return true;
+  }, { needs: 'kit' });
   t('cli 兜异常：ZIP 内部坏掉的文件走 inspect 要回结构化 JSON，不许吐裸栈', () => {
     const b = Buffer.from(fs.readFileSync(cnPath));
     const nl = b.readUInt16LE(26), el = b.readUInt16LE(28);          // 第一条目的局部头：名字长 + 扩展长 = 数据起点

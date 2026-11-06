@@ -1,9 +1,9 @@
-# Agent Doc Ops (dockit, Open Source Edition) v3.2.1
+# Agent Doc Ops (dockit, Open Source Edition) v3.2.2
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
 [![Platform](https://img.shields.io/static/v1?label=platform&message=Windows%20x64&color=blue)](#install--reproduce)
 [![Runtime](https://img.shields.io/static/v1?label=runtime&message=Node%20%3E%3D22.19&color=blue)](#install--reproduce)
-[![selftest](https://img.shields.io/static/v1?label=selftest&message=164%20checks&color=informational)](#verification)
+[![selftest](https://img.shields.io/static/v1?label=selftest&message=177%20checks&color=informational)](#verification)
 
 **Absolute path + one command + one JSON line**: a document-operations device
 for any agent on this machine, wrapping a prebuilt LibreOffice engine
@@ -71,7 +71,7 @@ flowchart LR
 A refusal is a verdict too: pre-gates (size/overwrite/encryption/format) fire
 before any unpacking or writing. No half-finished products.
 
-Version v3.2.1. Authority: this README (command surface master) + `docs/adr/`
+Version v3.2.2. Authority: this README (command surface master) + `docs/adr/`
 (key design decisions). Discipline: inputs read-only, products default to
 `_out/` (except `DOCKIT_OUT_DIR` test redirect / `_audit` ledger / gc
 quarantine), never overwrite; temp files see Operating boundaries
@@ -105,7 +105,7 @@ gets overwritten, inputs are never modified.**
 | `sheets` | List worksheet names. `zip` reads OOXML directly (no engine), `render` asks the engine; `auto` self-reports which road answered | `dockit.bat sheets book.xlsx` |
 | `inspect` | Inspect: container by magic bytes (**never by suffix**), conversion matrix, declared font families, metadata field **shapes** (names + lengths, body never echoes). PDF inputs additionally get a pure-JS `pdf` block: page count/sizes/rotation/encryption, font embedding verdicts, interactive-form probe. `--deep` attaches real-conversion `missingFonts` | `dockit.bat inspect report.docx --deep` |
 | `recalc` | Recompute workbook formulas (formulas kept, values refreshed). `--verify` diffs cached values cell by cell (ZIP xlsx/ods only) | `dockit.bat recalc book.xlsx --verify` |
-| `scrub` | Scrub metadata, OOXML+ODF since v1.6.0, PDF since v2.5.0: `docProps`, `meta.xml` nine fields + thumbnail removal, `/Info` keys + XMP removal -> new file, never in place. `--verify` rereads the product for zero residue | `dockit.bat scrub report.docx --verify` |
+| `scrub` | Scrub metadata, OOXML+ODF since v1.6.0, PDF since v2.5.0: `docProps`, `meta.xml` nine fields + thumbnail removal, `/Info` keys + XMP removal -> new file, never in place. `--verify` rereads the product for zero residue; `--core-dates keep|now|clear` (v3.2.2, default `keep`) preserves/rewrites/removes `dcterms:created`/`dcterms:modified` in `docProps/core.xml` and reports each field's action and old/new value | `dockit.bat scrub report.docx --verify`; `scrub report.docx --core-dates clear` |
 | `dump` | Package shape self-description, engine never started: part list + per-XML-part element/attribute counts and names; body text only with explicit `--text`; metadata parts shape-only. Three caps, overruns self-report `truncated` | `dockit.bat dump D:\report.docx` |
 | `factcheck` | Check hard-coded point-in-time facts in docs: counts, file/line calibers, negative assertions; `--strict` gates, `--refs` checks `file:line` references | `dockit.bat factcheck`; `factcheck --refs` |
 | `verify` | Cross-check two text-extraction roads of one source (text layer vs render+OCR): per-page matches, A-only lines (undrawn glyphs), B-only lines (phantoms). PDFs walk the render half only (`mode:render-only`) | `dockit.bat verify report.docx --lang chi_sim` |
