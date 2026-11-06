@@ -2096,6 +2096,8 @@ function cmdScrub(args) {
   const probeValues = [];
   const removed = [];
   const removedEntries = [];
+  const rewrittenParts = new Set();   // D-08：被脱敏真正改写过字节的 XML 部件（产物必须逐个过 well-formedness）
+  const sourceXml = new Map();        // 改写前原文，用来区分「源件本来就坏」与「装置把它改坏」
   const collect = (part, fields) => {
     const d = map.get(part); if (!d) return;
     for (const f of fields) {
@@ -2109,13 +2111,19 @@ function cmdScrub(args) {
     const xml = str(data); let hits = 0;
     for (const m of xml.matchAll(re)) { hits++; if (m[2] && m[2].trim()) removed.push(`${name}:${m[1]}`); }
     if (!hits) return;
-    map.set(name, Buffer.from(xml.replace(re, keep ?? ''), 'utf8'));
+    if (!sourceXml.has(name)) sourceXml.set(name, xml);
+    const nextXml = xml.replace(re, keep ?? '');
+    if (nextXml !== xml) rewrittenParts.add(name);
+    map.set(name, Buffer.from(nextXml, 'utf8'));
   };
   if (isOOXMLFam) {
     for (const part of ['docProps/core.xml', 'docProps/app.xml']) collect(part, META_PROBE_FIELDS);
     const CORE_RE = /<(dc:creator|dc:title|dc:subject|dc:description|cp:keywords|cp:lastModifiedBy|dc:date|dcterms:created|dcterms:modified|cp:revision)>([\s\S]*?)<\/\1>/g;
     cleanPart('docProps/core.xml', CORE_RE, '');
-    cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(>[^<]*<\/\1>)?/g, '');
+    // D-08：元素名必须按**完整名**收口，短名不得命中同族长名的前缀（Characters ⊄ CharactersWithSpaces、
+    // Words ⊄ WordsWithSpace）。旧写法 `(<name>(>text</name>)?)?` 后面那组可选，会把 <CharactersWithSpaces>
+    // 啃成 "WithSpaces>583</CharactersWithSpaces>"；自闭合/带属性的元素也必须整条匹配，不能只删开标签。
+    cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(?:\s[^>]*)?(?:\/>|>([^<]*)<\/\1>)/g, '');
     cleanPart('docProps/app.xml', /<TitlesOfParts>[\s\S]*?<\/TitlesOfParts>/g, '');
   } else {
     // ODF：元数据全在 meta.xml；删除用一张与探针同宽的 alternation 正则，漏一条就等 --verify 抓残留
@@ -2140,6 +2148,20 @@ function cmdScrub(args) {
   catch (e) { die('invalid-output', `scrub 写出的压缩包回读失败：${e.message}`, '这是装置缺陷（自写容器没过 CRC/字节对账），别用这个产物，把它当回归报出来'); }
   const bytesMatch = back.size === entries.length && entries.every((e) => Buffer.compare(back.get(e.name), e.data) === 0);
   if (!bytesMatch) die('invalid-output', 'scrub 写出的压缩包回读对不上（条目数或字节不一致）', '别用这个产物；把本条当装置缺陷报出来，不要换个输出名重试');
+  // D-08：被改写的每个 XML 部件都要**真的解析**（well-formedness），不能只搜敏感串——
+  // 正则把 <CharactersWithSpaces> 的开标签啃掉半截时，敏感串可能已删干净，但容器已经不是合法 OOXML。
+  const xmlCheckedParts = [];
+  for (const part of rewrittenParts) {
+    const outText = str(back.get(part));
+    const srcText = sourceXml.get(part) ?? '';
+    const srcWf = xmlWellFormed(srcText);
+    const outWf = xmlWellFormed(outText);
+    xmlCheckedParts.push({ part, sourceWellFormed: srcWf.ok, wellFormed: outWf.ok, error: outWf.ok ? undefined : outWf.error });
+    if (!outWf.ok) {
+      if (srcWf.ok) die('invalid-output', `scrub 写出的 ${part} 不是合法 XML（${outWf.error}）——装置脱敏正则改坏了标签结构`, '这是装置缺陷（自写产物没过 XML well-formedness），别用这个产物；把本条当回归报出来，不要换个输出名重试');
+      die('invalid-document', `源件的 ${part} 本来就不是合法 XML（${outWf.error}），脱敏改写后依旧非法`, '先确认源文件没被截断或改坏：从原始来源重新导出／重新下载后重跑 scrub；脱敏不负责修坏容器');
+    }
+  }
   const first = entries[0] || null;
   const res = {
     ok: true, op: 'scrub', input, output, container: scrubFam, bytes: fs.statSync(output).size, sha256: sha256(fs.readFileSync(output)),
@@ -2156,7 +2178,8 @@ function cmdScrub(args) {
     res.verify = {
       converted: r.ok, checkedStrings: probeValues.length, residual: residual.length,
       residualFields: residual.map((v) => `${v.part}:${v.field}`),
-      note: '判据：按**固定探针清单**从源文件取非空值（与删除动作无关），逐个在产物 PDF 明文字节（含 XMP）里回查；漏删会在这里现形，不会自证过度',
+      xmlWellFormed: { ok: true, checkedParts: xmlCheckedParts.length, parts: xmlCheckedParts.map((x) => x.part) },
+      note: '判据：按**固定探针清单**从源文件取非空值（与删除动作无关），逐个在产物 PDF 明文字节（含 XMP）里回查；漏删会在这里现形，不会自证过度；改写过的 XML 部件另按 well-formedness 逐个解析（D-08）',
     };
     try { fs.rmSync(pdf, { force: true }); } catch {}
     if (!r.ok) res.verify.error = r.error;
@@ -3148,6 +3171,50 @@ function xmlAttrsOf(text, node) {
 }
 function xmlWalk(node, fn) { for (const c of node.children) { fn(c); xmlWalk(c, fn); } }
 function xmlRootOf(text) { const r = xmlScan(text); return r.children.length === 1 ? r.children[0] : r; }
+/** D-08：严格 well-formedness 校验（scrub 产物自证用）。与 xmlScan 的**宽容定位器**相反：
+ *  xmlScan 找不到闭合就跳过（用于按字节手术）；这里必须报错——少一个 `<`、闭合名前缀被短名分支啃掉，
+ *  都要当场抓住。只校验结构（标签配对/根元素唯一），不建树、不查实体。 */
+function xmlWellFormed(text) {
+  const src = String(text);
+  const stack = [];
+  let roots = 0;
+  let i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt < 0) break;
+    if (src.startsWith('<!--', lt)) { const e = src.indexOf('-->', lt + 4); if (e < 0) return { ok: false, error: `注释未闭合（偏移 ${lt}）` }; i = e + 3; continue; }
+    if (src.startsWith('<![CDATA[', lt)) { const e = src.indexOf(']]>', lt + 9); if (e < 0) return { ok: false, error: `CDATA 未闭合（偏移 ${lt}）` }; i = e + 3; continue; }
+    if (src.startsWith('<?', lt)) { const e = src.indexOf('?>', lt + 2); if (e < 0) return { ok: false, error: `处理指令未闭合（偏移 ${lt}）` }; i = e + 2; continue; }
+    if (src.startsWith('<!', lt)) { const e = xmlTagEnd(src, lt + 2); if (e < 0) return { ok: false, error: `声明未闭合（偏移 ${lt}）` }; i = e + 1; continue; }
+    const gt = xmlTagEnd(src, lt + 1);
+    if (gt < 0) return { ok: false, error: `标签未闭合（偏移 ${lt}）` };
+    const raw = src.slice(lt + 1, gt);
+    if (raw.startsWith('/')) {
+      const name = raw.slice(1).trim();
+      if (!/^[A-Za-z_][\w.:-]*$/.test(name)) return { ok: false, error: `闭合标签名非法：</${name}>（偏移 ${lt}）` };
+      const top = stack.pop();
+      if (!top) return { ok: false, error: `多余的闭合标签 </${name}>（偏移 ${lt}）` };
+      if (top !== name) return { ok: false, error: `闭合标签不匹配：<${top}> 被 </${name}> 关闭（偏移 ${lt}）` };
+      i = gt + 1; continue;
+    }
+    const self = /\/\s*$/.test(raw);
+    const body = self ? raw.replace(/\/\s*$/, '') : raw;
+    const m = /^([A-Za-z_][\w.:-]*)([\s\S]*)$/.exec(body);
+    if (!m) return { ok: false, error: `开标签名非法：<${raw}>（偏移 ${lt}）` };
+    let rest = m[2];
+    while (rest.trim()) {
+      const am = /^\s+([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"]*"|'[^']*')([\s\S]*)$/.exec(rest);
+      if (!am) return { ok: false, error: `属性不合法：<${raw}>（偏移 ${lt}）` };
+      rest = am[2];
+    }
+    if (!stack.length) roots += 1;
+    if (!self) stack.push(m[1]);
+    i = gt + 1;
+  }
+  if (stack.length) return { ok: false, error: `元素未闭合：<${stack[stack.length - 1]}>` };
+  if (roots !== 1) return { ok: false, error: `根元素数量=${roots}（期望恰好 1）` };
+  return { ok: true, error: null };
+}
 /** 路径解析：/body/p[2] 或 body/p[2]；name 不带索引且命中多个 ⇒ 二义拒绝（不许猜）。 */
 function wResolvePath(rootElem, p) {
   if (typeof p !== 'string' || !p.trim()) return { error: '路径为空' };
@@ -7793,6 +7860,57 @@ async function cmdSelftest(args) {
     return bad.length ? bad.slice(0, 6).join(' | ') : true;
   });
   t('scrub 的 roundTrip 自证在位（条目数与逐条字节都对上）', () => SR().roundTrip && SR().roundTrip.bytesMatch === true && SR().roundTrip.entries > 0 ? true : JSON.stringify(SR().roundTrip));
+  t('scrub 产物 XML 必须 well-formed（D-08）', () => {
+    const app = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Template>Normal.dotm</Template><Application>Fake App</Application><AppVersion>1.0</AppVersion><TotalTime>5</TotalTime><Pages>1</Pages><Words>7</Words><WordsWithSpace>9</WordsWithSpace><Characters>40</Characters><CharactersWithSpaces>53</CharactersWithSpaces><Lines>3</Lines><Paragraphs>2</Paragraphs><Company>ACME</Company><Manager>Boss</Manager></Properties>`;
+    const CT2 = CT.replace('</Types>', '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>');
+    const RELS2 = RELS.replace('</Relationships>', '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>');
+    const fixture = `${S}/d08-app.docx`, product = `${S}/d08-app-out.docx`;
+    fs.writeFileSync(fixture, zipWrite([
+      { name: '[Content_Types].xml', data: Buffer.from(CT2) },
+      { name: '_rels/.rels', data: Buffer.from(RELS2) },
+      { name: 'docProps/core.xml', data: Buffer.from(CORE) },
+      { name: 'docProps/app.xml', data: Buffer.from(app) },
+      { name: 'word/_rels/document.xml.rels', data: Buffer.from(DOCRELS) },
+      { name: 'word/document.xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${S_}><w:body><w:p><w:r><w:t>D08</w:t></w:r></w:p></w:body></w:document>`) },
+    ]));
+    try { fs.rmSync(product, { force: true }); } catch {}
+    const p = spawnSync(process.execPath, [__filename, 'scrub', fixture, product, '--verify'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    let j = null; try { j = JSON.parse(String(p.stdout)); } catch { /* 下面按没读懂报红 */ }
+    if (!j) return `scrub 没出 JSON：status=${p.status} ${kidErr(p.stdout || p.stderr)}`;
+    if (p.status !== 0 || j.ok !== true) return `scrub 失败：${j.code || '?'} ${String(j.error || '').slice(0, 140)}`;
+    const outApp = str(zipRead(fs.readFileSync(product)).get('docProps/app.xml'));
+    const wf = xmlWellFormed(outApp);
+    if (!wf.ok) return `产物 app.xml 非法：${wf.error}`;
+    if (!outApp.includes('<CharactersWithSpaces>53</CharactersWithSpaces>')) return '长名元素 <CharactersWithSpaces> 被啃坏或丢失';
+    if (!outApp.includes('<WordsWithSpace>9</WordsWithSpace>')) return '长名元素 <WordsWithSpace> 被啃坏或丢失';
+    if (/<Characters>/.test(outApp)) return '短名元素 <Characters> 没被清掉（脱敏漏删）';
+    const wfRep = j.verify && j.verify.xmlWellFormed;
+    if (!wfRep || wfRep.ok !== true || !Array.isArray(wfRep.parts) || !wfRep.parts.includes('docProps/app.xml')) return `verify 没自报产物 XML 校验：${JSON.stringify(wfRep)}`;
+    return true;
+  });
+  t('scrub 坏 app.xml 必须被拦：源件 XML 本来非法时不得回成功，改写过的每个 XML 部件都要真解析（D-08）', () => {
+    const badApp = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Words>7</Words><Broken>x</Wrong><Company>ACME</Company></Properties>`;
+    const CT2 = CT.replace('</Types>', '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>');
+    const RELS2 = RELS.replace('</Relationships>', '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>');
+    const fixture = `${S}/d08-bad-app.docx`, product = `${S}/d08-bad-app-out.docx`;
+    fs.writeFileSync(fixture, zipWrite([
+      { name: '[Content_Types].xml', data: Buffer.from(CT2) },
+      { name: '_rels/.rels', data: Buffer.from(RELS2) },
+      { name: 'docProps/core.xml', data: Buffer.from(CORE) },
+      { name: 'docProps/app.xml', data: Buffer.from(badApp) },
+      { name: 'word/_rels/document.xml.rels', data: Buffer.from(DOCRELS) },
+      { name: 'word/document.xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${S_}><w:body><w:p><w:r><w:t>D08-bad</w:t></w:r></w:p></w:body></w:document>`) },
+    ]));
+    try { fs.rmSync(product, { force: true }); } catch {}
+    const p = spawnSync(process.execPath, [__filename, 'scrub', fixture, product], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    let j = null; try { j = JSON.parse(String(p.stdout)); } catch { /* 下面按没读懂报红 */ }
+    if (!j) return `scrub 没出 JSON：status=${p.status} ${kidErr(p.stdout || p.stderr)}`;
+    if (p.status !== 1 || j.ok !== false) return `坏 app.xml 被当成功放行：ok=${j.ok} residual=${j.verify ? j.verify.residual : '(无 verify)'}`;
+    if (j.code !== 'invalid-document') return `坏源件 code=${JSON.stringify(j.code)}（期望 invalid-document）`;
+    if (typeof j.next !== 'string' || !j.next.trim()) return '坏源件没给可执行 next';
+    if (!/合法 XML/.test(String(j.error || ''))) return `错误文案没点名 XML 非法：${String(j.error || '').slice(0, 120)}`;
+    return true;
+  });
   t('scrub 原件零改动（core.xml 里作者串仍在原文件）', () => { SR(); return str(zipRead(fs.readFileSync(cnPath)).get('docProps/core.xml')).includes(AUTHOR) && !str(zipRead(fs.readFileSync(scrubbed)).get('docProps/core.xml')).includes(AUTHOR); });
   t('cli 兜异常：ZIP 内部坏掉的文件走 inspect 要回结构化 JSON，不许吐裸栈', () => {
     const b = Buffer.from(fs.readFileSync(cnPath));

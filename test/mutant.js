@@ -72,7 +72,7 @@ const MUTANTS = [
   { id: 'M7', file: D, only: 'codes', name: 'nextFor 不给处置文案', find: `case 'timeout': return \`文档很大或引擎冷启动慢；加 --timeout-ms（当前默认 \${DEFAULT_TIMEOUT_MS}）\`;`, to: `case 'timeout': return '';`, mustRed: ['codes 八种码族在装置里有处置文案'] },
   { id: 'M8', file: D, only: 'inspect', name: 'inspect 把整段元数据原文吐进回报（不截断）', find: `meta.push({ part, ...f });`, to: `meta.push({ part, ...f, raw: (() => { try { return String(zipRead(fs.readFileSync(input)).get(part)); } catch { return ''; } })() });`, mustRed: ['inspect 元数据只给字段名+长度'] },
   { id: 'M9', file: D, only: 'zip 自写包,scrub 的 roundTrip', blast: true, name: 'zipWrite 的**中央目录** CRC 写成 0（读者实际用那一项）', find: `ch.writeUInt32LE(crc, 16);`, to: `ch.writeUInt32LE(0, 16);`, mustRed: ['zip 自写包坏在明处会被抓：中央目录 CRC 被抹必须抛错', 'scrub 的 roundTrip 自证在位'], msg: ['中央=0'] },
-  { id: 'M10', file: D, only: 'zip 自写包,inspect,scrub 的 roundTrip,scrub 原件零改动', blast: true, name: 'zipRead 对 deflate 条目不解压（读回原始压缩字节）', find: `if (method === 8) data = zlib.inflateRawSync(raw);`, to: `if (method === 8) data = raw;`, mustRed: ['inspect 声明字体族里能看到故意族', 'scrub 原件零改动'] },
+  { id: 'M10', file: D, only: 'zip 自写包,inspect,scrub 的 roundTrip,scrub 原件零改动', blast: true, name: 'zipRead 对 deflate 条目不解压（读回原始压缩字节）', find: `data = zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, maxBytes - total) });`, to: `data = raw;`, mustRed: ['inspect 声明字体族里能看到故意族', 'scrub 原件零改动'] },
   { id: 'M11', file: 'package.json', only: 'v1 版本号', name: 'package.json 的版本位写错', find: `"version": "${V}"`, to: `"version": "9.9.9"`, mustRed: ['v1 版本号五处一致'] },
   { id: 'M12', file: '项目总览.md', only: 'v1 版本号', name: '项目总览页眉的版本位没跟上', find: `版本 v${V} ｜ 更新日期`, to: `版本 v9.9.9 ｜ 更新日期`, mustRed: ['v1 版本号五处一致'] },
   { id: 'M13', file: 'README.md', only: 'v1 版本号', name: 'README 的版本位没跟上', find: `版本 v${V} ｜ 权威文档`, to: `版本 v9.9.9 ｜ 权威文档`, mustRed: ['v1 版本号五处一致'] },
@@ -448,18 +448,21 @@ const MUTANTS = [
   //      它在缺失态被洗成 kit 归因的 SKIP、名字又不在注册表 ⇒ 只有新分支能抓它（missing 为空，旧集合口径与新分支都红，
   //      但红因文本只有新分支才带「吃 kit 却未登记的」）。
   { id: 'M269', file: D, only: '依赖覆盖率闸', name: 'CI 首绿轮：把一条**不在注册表里**的静态判据改成「声明 {needs:kit} 且恒失败」——它被洗成 SKIP、不进 failed≠控制组那条路，必须由「吃 kit 却未登记」新分支抓红', find: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => VERSION.startsWith('3.'));", to: "t('v3 版本迭代位规则未被违反：大版本为机主批准的 3（机主 2026-10-14 令「版本号升 3.0.0」；AI 不得自升 X）', () => false, {needs:'kit'});", mustRed: ['依赖覆盖率闸'], msg: ['吃 kit 却未登记的'] },
-  // ---- v3.2.1（2026-11-06 公开版独立审查 H1）：零变化空成功闸的整体与标量覆盖面，各配一刀 ----
+  // ---- 审查批（2026-11-06 公开版独立审查 H1）：零变化空成功闸的整体与标量覆盖面，各配一刀 ----
   { id: 'M270', file: D, only: 'edit 零变化分类', name: '零变化空成功闸整体摘掉（后端报成功但字节没变仍回 ok:true，H1 的原始形状复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (false && workShaAfter === workShaPre) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
   { id: 'M271', file: D, only: 'edit 零变化分类', name: '零变化闸只放行"有文本针"的请求（全标量时整段跳过，H1 的标量覆盖面缺口复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (workShaAfter === workShaPre && !Object.entries(props).every(([, v]) => SCALAR_LITERAL.test(String(v)))) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
-  // ---- v3.2.1 公开审查 M1：本地解压上限的两层（条目数、累计字节）各配一刀 ----
+  // ---- 审查批 公开审查 M1：本地解压上限的两层（条目数、累计字节）各配一刀 ----
   { id: 'M272', file: D, only: 'zip 本地解压上限', name: '条目数上限摘掉（异常多条目包照读，M1 的条目数面复辟）', find: 'if (count > maxEntries) throw zipLimitError(', to: 'if (false && count > maxEntries) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['条目数超限没抛错'] },
   { id: 'M273', file: D, only: 'zip 本地解压上限', name: '累计解压字节上限摘掉（高压缩比包照解到底，M1 的字节面复辟）', find: 'if (total > maxBytes) throw zipLimitError(', to: 'if (false && total > maxBytes) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['累计解压字节超限没抛错'] },
-  // ---- v3.2.1 公开审查 M2：stdout/stderr 不分流（kit 的 stderr warning 把成功误报 failed）----
+  // ---- 审查批 公开审查 M2：stdout/stderr 不分流（kit 的 stderr warning 把成功误报 failed）----
   { id: 'M274', file: D, only: 'kit stderr 噪声', name: '把 stderr 重新拼进 JSON 解析（stderr 一句 warning 就判成功转换失败）', find: 'const out = parseJson(stdoutText);', to: 'const out = parseJson(stdoutText + stderrText);', mustRed: ['kit stderr 噪声'], msg: ['stdout 合法且产物已落盘却报失败'] },
-  // ---- v3.2.1 公开审查 L1：ZIP magic 前的 0–3 字节长度守卫（四处命令共用同一个 helper）----
+  // ---- 审查批 公开审查 L1：ZIP magic 前的 0–3 字节长度守卫（四处命令共用同一个 helper）----
   { id: 'M275', file: D, only: '短文件长度守卫', name: '摘掉 ZIP magic 前的长度守卫（0–3 B 文件退回 RangeError 装置内部异常）', find: "if (buf.length < 4) die('invalid-document'", to: "if (false && buf.length < 4) die('invalid-document'", mustRed: ['短文件长度守卫'], msg: ['仍是长度越界异常'] },
-  // ---- v3.2.1 公开审查 L2：cmdTo 对 kit 回报落点的存在性自证（merge 同款）----
+  // ---- 审查批 公开审查 L2：cmdTo 对 kit 回报落点的存在性自证（merge 同款）----
   { id: 'M276', file: D, only: 'to 的 kit 落点自证', name: '摘掉落点存在性自证（kit 报 outputPath 但没写文件时退回 ENOENT 内部异常）', find: 'if (!fs.existsSync(claimedOut)) die(', to: 'if (false && !fs.existsSync(claimedOut)) die(', mustRed: ['to 的 kit 落点自证'], msg: ['仍被兜成内部异常'] },
+  // ---- 审查批 公开同步 D-08：app.xml 短名吃长名前缀 + scrub 产物只搜串不校验 XML ----
+  { id: 'M277', file: D, only: 'scrub 产物 XML', name: '把 app.xml 脱敏正则退回前缀匹配（Characters 吃掉 CharactersWithSpaces 的开标签）', find: String.raw`cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(?:\s[^>]*)?(?:\/>|>([^<]*)<\/\1>)/g, '');`, to: String.raw`cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(>[^<]*<\/\1>)?/g, '');`, mustRed: ['scrub 产物 XML 必须 well-formed'], msg: ['scrub 失败：invalid-output'] },
+  { id: 'M278', file: D, only: 'scrub 坏 app.xml', name: '摘掉改写后 XML 部件的 well-formedness 校验（坏源件被当成功放行）', find: `for (const part of rewrittenParts) {`, to: `for (const part of []) { // M278`, mustRed: ['scrub 坏 app.xml 必须被拦'], msg: ['被当成功放行'] },
 ];
 
 const argv = process.argv.slice(2);
