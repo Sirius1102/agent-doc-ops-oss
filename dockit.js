@@ -845,33 +845,58 @@ const officecliVersion = () => {
 };
 
 // ---- 手写 ZIP（标准库 zlib 足够，避免依赖 kit 的传递依赖 fflate）----
-function zipRead(buf) {
+// ---- v3.2.1 公开审查 M1：本地解压上限（kit 的 --max-uncompressed-bytes 只护 kit 自己的读取路径，
+//      装置本地约 20 个 zipRead 调用点此前完全裸奔）。上限与输入体积闸同口径：压缩后 ≤ 256 MB 的包，
+//      解压后也不许超过 256 MB；条目数超过 2 万按异常包拒绝。超限**整件失败**，不解压到底、不截断。
+const ZIP_MAX_ENTRIES = 20000;
+const ZIP_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+function zipLimitError(kind, got, cap) {
+  return Object.assign(new Error(`ZIP ${kind}超过本地上限：${got} > ${cap}`), {
+    dockitCode: 'invalid-document',
+    dockitNext: `这个包按${kind}超限（本机上限 ${cap}，实为 ${got}）：装置整件拒绝，不解压也不截断。先向来源确认；确需处理就拆小源文件后重做，别把 --max-input-bytes 当绕行开关（它只量压缩后体积）`,
+  });
+}
+function zipRead(buf, limits) {
   // 读不通的 ZIP 属于**输入文件坏了**，不是装置缺陷：打上分类标签，入口区据此回 invalid-document（不冤枉成 failed）。
-  try { return zipReadRaw(buf); }
+  try { return zipReadRaw(buf, limits); }
   catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { dockitCode: 'invalid-document' }); }
 }
-function zipReadRaw(buf) {
+function zipReadRaw(buf, limits) {
+  const maxEntries = limits && Number(limits.maxEntries) > 0 ? Number(limits.maxEntries) : ZIP_MAX_ENTRIES;
+  const maxBytes = limits && Number(limits.maxUncompressedBytes) > 0 ? Number(limits.maxUncompressedBytes) : ZIP_MAX_UNCOMPRESSED_BYTES;
   const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (eocd < 0) throw new Error('不是 ZIP 容器（无 EOCD）');
   const count = buf.readUInt16LE(eocd + 10);
+  if (count > maxEntries) throw zipLimitError('条目数', count, maxEntries);
   let off = buf.readUInt32LE(eocd + 16);
   const entries = [];
+  let total = 0;
   for (let i = 0; i < count; i++) {
     if (buf.readUInt32LE(off) !== 0x02014b50) break;
     const method = buf.readUInt16LE(off + 10);
     const crc = buf.readUInt32LE(off + 16);
     const compSize = buf.readUInt32LE(off + 20);
+    const size = buf.readUInt32LE(off + 24);
     const nameLen = buf.readUInt16LE(off + 28), extraLen = buf.readUInt16LE(off + 30), cmtLen = buf.readUInt16LE(off + 32);
     const localOff = buf.readUInt32LE(off + 42);
     const name = buf.subarray(off + 46, off + 46 + nameLen).toString('utf8');
     const lNameLen = buf.readUInt16LE(localOff + 26), lExtraLen = buf.readUInt16LE(localOff + 28);
     const localCrc = buf.readUInt32LE(localOff + 14);
     if (localCrc !== 0 && localCrc !== crc) throw new Error(`ZIP 局部头与中央目录 CRC 打架：${name} 局部=${localCrc.toString(16)} 中央=${crc.toString(16)}`);
+    // 中央目录的记录值先量一次；它若撒谎（写小），下面的实际长度还会再量一次，两层都不信包自报。
+    if (size > maxBytes - total) throw zipLimitError('解压总字节', total + size, maxBytes);
     const dataStart = localOff + 30 + lNameLen + lExtraLen;
     const raw = buf.subarray(dataStart, dataStart + compSize);
     let data = raw;
-    if (method === 8) data = zlib.inflateRawSync(raw);
-    else if (method !== 0) throw new Error('不支持的 ZIP 压缩方法 ' + method);
+    if (method === 8) {
+      try { data = zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, maxBytes - total) }); }
+      catch (e) {
+        if (e && e.code === 'ERR_BUFFER_TOO_LARGE') throw zipLimitError('解压总字节', `>${maxBytes}`, maxBytes);
+        throw e;
+      }
+    } else if (method !== 0) throw new Error('不支持的 ZIP 压缩方法 ' + method);
+    total += data.length;
+    if (total > maxBytes) throw zipLimitError('解压总字节', total, maxBytes);
     // 🔴 验 CRC：不验就把坏包当好包（变异台 M9 教训——写出的 CRC 若没人对账，"产物能打开"根本防不住压缩包写坏）
     const got = crc32(data);
     if (got !== crc) throw new Error(`ZIP 条目 CRC 不匹配：${name} 记录=${crc.toString(16)} 实算=${got.toString(16)}`);
@@ -2261,7 +2286,7 @@ function cmdDump(args) {
   catch (e) { die('invalid-document', `ZIP 中央目录读不通：${e.message}`, '中央目录坏掉的包没法 dump 形状：别外发，从来源重取'); }
   let map;
   try { map = zipRead(buf); }
-  catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, '条目 CRC 不匹配、压缩流被改过 ⇒ 输入文件坏了：别外发、别当已核验（这一层与 check 共用装置的逐条实算）'); }
+  catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, (e && e.dockitNext) || '条目 CRC 不匹配、压缩流被改过 ⇒ 输入文件坏了：别外发、别当已核验（这一层与 check 共用装置的逐条实算）'); }
   const container = zipFamily(map);
   if (!container) die('invalid-document', 'ZIP 里找不到 OOXML/ODF 的标志部件，认不出容器', '先 inspect 看容器识别结果');
   const onlyPart = flags.part === undefined ? null : String(flags.part);
@@ -2692,7 +2717,7 @@ function cmdCheck(args) {
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'check 吃 ZIP 系容器（docx/xlsx/pptx/odt/ods/odp）与 PDF（v2.6.0 起走纯 JS 结构面），且全程不起引擎；输入按 magic 判两者都不是', 'OLE 二进制（.doc/.xls/.ppt）先 to 成 OOXML 再 check；PDF 交给本命令的 PDF 面；要核正文内容走 verify 的渲染半条');
   let map;
   try { map = zipRead(buf); }
-  catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, '条目 CRC 不匹配、压缩流被改过或压根不是 ZIP ⇒ 输入文件坏了：别外发、别当已核验，从来源重取（这一层复用装置既有的逐条 CRC 实算，不另写一套）'); }
+  catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, (e && e.dockitNext) || '条目 CRC 不匹配、压缩流被改过或压根不是 ZIP ⇒ 输入文件坏了：别外发、别当已核验，从来源重取（这一层复用装置既有的逐条 CRC 实算，不另写一套）'); }
   const container = zipFamily(map);
   if (!container) die('invalid-document', 'ZIP 里找不到 OOXML/ODF 的标志部件，认不出容器', '先 inspect 看容器识别结果；纯文本改后缀的伪装件会在这里红');
   const findings = [];
@@ -3479,7 +3504,7 @@ function cmdMedia(args) {
     return mediaFromPdf(input, buf, { ...flags, reencode }, t0);
   }
   let map = null;
-  try { map = zipRead(buf); } catch (e) { die('invalid-document', `按 ZIP 读不通：${e.message}`, '别外发、别当已核验；从来源重取或先 inspect'); }
+  try { map = zipRead(buf); } catch (e) { die('invalid-document', `按 ZIP 读不通：${e.message}`, (e && e.dockitNext) || '别外发、别当已核验；从来源重取或先 inspect'); }
   const fam = zipFamily(map);
   if (!fam) die('invalid-document', 'ZIP 里找不到 OOXML/ODF 的标志部件，认不出容器', '先 inspect 看容器识别结果；纯文本/伪装件不许绕路');
   const cap = flags['max-files'] !== undefined ? Number(flags['max-files']) : MEDIA_MAX_FILES;
@@ -4427,7 +4452,7 @@ function cmdRedline(args) {
   const buf = fs.readFileSync(input);
   const inSha = sha256(buf);
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'redline 只吃 docx（输入按 magic 判不是 ZIP）', 'OLE 的 .doc 先 to 成 docx；ODF/PDF 没有 WordprocessingML 的修订面');
-  let map; try { map = zipRead(buf); } catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, '别当已核验，从来源重取'); }
+  let map; try { map = zipRead(buf); } catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, (e && e.dockitNext) || '别当已核验，从来源重取'); }
   if (zipFamily(map) !== 'docx') die('unsupported-format', `这份 ZIP 的容器是 ${zipFamily(map) || '(认不出)'}，redline 只吃 docx`, 'xlsx/pptx 没有 WordprocessingML 修订模型；换工具或先转族');
   const docPart = 'word/document.xml';
   if (!map.get(docPart)) die('invalid-document', '包里缺 word/document.xml', '这不是完整的 docx：从来源重取');
@@ -4949,7 +4974,7 @@ function asyncFailPayload(e) {
   // 与入口同步兜底同一把尺（见入口区 catch）：ZIP/CRC/inflate 类是"输入容器读不通"，归 invalid-document，
   // 不许因命令改成 async（inspect 现为 async）就把损坏容器误报成"装置缺陷类 failed"（2026-10-10 技能对照轮实测回归）。
   const zipish = e && e.dockitCode ? e.dockitCode === 'invalid-document' : /CRC|ZIP|EOCD|inflate|zlib|code lengths|incorrect header|invalid distance/i.test(msg);
-  if (zipish) return { code: 'invalid-document', error: `读不通这个容器（已兜住，不吐裸栈）：${msg}`, next: '这个文件按 ZIP 读不通（条目 CRC 不匹配、压缩流坏了或不是 ZIP 容器）。先怀疑文件本身损坏：别外发、别当已核验，必要时从来源重取' };
+  if (zipish) return { code: 'invalid-document', error: `读不通这个容器（已兜住，不吐裸栈）：${msg}`, next: (e && e.dockitNext) || '这个文件按 ZIP 读不通（条目 CRC 不匹配、压缩流坏了或不是 ZIP 容器）。先怀疑文件本身损坏：别外发、别当已核验，必要时从来源重取' };
   return { code: 'failed', error: `异步命令失败（装置缺陷类）：${msg}`, next: '把本行 JSON 原样回报给调用方，不要重试；装置的成功与失败都是 stdout 上的一份 JSON，判成败只看 ok 字段与退出码' };
 }
 function safeJson(v) { try { return JSON.stringify(v); } catch { return ''; } }
@@ -7635,6 +7660,34 @@ async function cmdSelftest(args) {
     const cd = b.readUInt32LE(eocd + 16);
     b.writeUInt32LE(0, cd + 16);
     try { zipRead(b); return '没抛错——中央 CRC 没人对'; } catch (e) { return /CRC/.test(e.message) ? true : '抛了但不是 CRC：' + e.message; }
+  });
+  t('zip 本地解压上限：条目数与累计解压字节超限都整件拒绝、自报 code/next，不静默截断', () => {
+    const bad = [];
+    const base = zipWrite([{ name: 'a.bin', data: Buffer.alloc(4096, 1), method: 0 }]);
+    const eocd = base.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const cd = base.readUInt32LE(eocd + 16);
+    // 中央目录的记录值故意写 0（撒谎写小）：声明层看不见，只能靠实际累计字节层抓——两层都不信包自报。
+    const tuned = Buffer.from(base); tuned.writeUInt32LE(0, cd + 24);
+    try { zipRead(tuned, { maxUncompressedBytes: 1024 }); bad.push('累计解压字节超限没抛错'); }
+    catch (e) {
+      if (e.dockitCode !== 'invalid-document') bad.push('字节超限的 code 不是 invalid-document：' + JSON.stringify(e.dockitCode));
+      if (!/解压总字节/.test(e.message)) bad.push('字节超限的错误文案没点名解压总字节：' + e.message);
+      if (!e.dockitNext || !/上限/.test(e.dockitNext)) bad.push('字节超限没给可执行的 next：' + JSON.stringify(e.dockitNext));
+    }
+    try { const m = zipRead(tuned, { maxUncompressedBytes: 8192 }); if (!m || m.get('a.bin')?.length !== 4096) bad.push('上限内的正常包被误伤'); }
+    catch (e) { bad.push('上限内的正常包被误伤：' + e.message); }
+    const many = zipWrite([{ name: 'a.bin', data: Buffer.from('x'), method: 0 }]);
+    const e2 = many.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const claimed = Buffer.from(many);
+    claimed.writeUInt16LE(ZIP_MAX_ENTRIES + 1, e2 + 8);
+    claimed.writeUInt16LE(ZIP_MAX_ENTRIES + 1, e2 + 10);
+    try { zipRead(claimed); bad.push('条目数超限没抛错'); }
+    catch (e) {
+      if (e.dockitCode !== 'invalid-document') bad.push('条目超限的 code 不是 invalid-document：' + JSON.stringify(e.dockitCode));
+      if (!/条目数/.test(e.message)) bad.push('条目超限的错误文案没点名条目数：' + e.message);
+      if (!e.dockitNext || !/上限/.test(e.dockitNext)) bad.push('条目超限没给可执行的 next：' + JSON.stringify(e.dockitNext));
+    }
+    return bad.length ? bad.slice(0, 5).join(' | ') : true;
   });
   t('scrub 的 roundTrip 自证在位（条目数与逐条字节都对上）', () => SR().roundTrip && SR().roundTrip.bytesMatch === true && SR().roundTrip.entries > 0 ? true : JSON.stringify(SR().roundTrip));
   t('scrub 原件零改动（core.xml 里作者串仍在原文件）', () => { SR(); return str(zipRead(fs.readFileSync(cnPath)).get('docProps/core.xml')).includes(AUTHOR) && !str(zipRead(fs.readFileSync(scrubbed)).get('docProps/core.xml')).includes(AUTHOR); });
@@ -10609,7 +10662,7 @@ if (require.main === module) {
     const zipish = e && e.dockitCode ? e.dockitCode === 'invalid-document' : /CRC|ZIP|EOCD|inflate|zlib|code lengths|incorrect header|invalid distance/i.test(msg);
     const code = zipish ? 'invalid-document' : 'failed';
     die(code, `装置内部异常（已兜住，不吐裸栈）：${msg}`, zipish
-      ? '这个文件按 ZIP 读不通（条目 CRC 不匹配、压缩流坏了或不是 ZIP 容器）。先怀疑文件本身损坏：别外发、别当已核验，必要时从来源重取'
+      ? ((e && e.dockitNext) || '这个文件按 ZIP 读不通（条目 CRC 不匹配、压缩流坏了或不是 ZIP 容器）。先怀疑文件本身损坏：别外发、别当已核验，必要时从来源重取')
       : '这是装置缺陷：把本行 JSON 原样回报给调用方，不要重试');
   } } )();
   if (r && typeof r.then === 'function') r.catch((e) => { const p = asyncFailPayload(e); die(p.code, p.error, p.next); });

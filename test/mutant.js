@@ -451,6 +451,9 @@ const MUTANTS = [
   // ---- v3.2.1（2026-11-06 公开版独立审查 H1）：零变化空成功闸的整体与标量覆盖面，各配一刀 ----
   { id: 'M270', file: D, only: 'edit 零变化分类', name: '零变化空成功闸整体摘掉（后端报成功但字节没变仍回 ok:true，H1 的原始形状复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (false && workShaAfter === workShaPre) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
   { id: 'M271', file: D, only: 'edit 零变化分类', name: '零变化闸只放行"有文本针"的请求（全标量时整段跳过，H1 的标量覆盖面缺口复辟）', find: 'if (workShaAfter === workShaPre) {', to: 'if (workShaAfter === workShaPre && !Object.entries(props).every(([, v]) => SCALAR_LITERAL.test(String(v)))) {', mustRed: ['edit 零变化分类'], msg: ['全标量属性零变化仍回 ok:true'] },
+  // ---- v3.2.1 公开审查 M1：本地解压上限的两层（条目数、累计字节）各配一刀 ----
+  { id: 'M272', file: D, only: 'zip 本地解压上限', name: '条目数上限摘掉（异常多条目包照读，M1 的条目数面复辟）', find: 'if (count > maxEntries) throw zipLimitError(', to: 'if (false && count > maxEntries) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['条目数超限没抛错'] },
+  { id: 'M273', file: D, only: 'zip 本地解压上限', name: '累计解压字节上限摘掉（高压缩比包照解到底，M1 的字节面复辟）', find: 'if (total > maxBytes) throw zipLimitError(', to: 'if (false && total > maxBytes) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['累计解压字节超限没抛错'] },
 ];
 
 const argv = process.argv.slice(2);
