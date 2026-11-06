@@ -456,6 +456,8 @@ const MUTANTS = [
   { id: 'M273', file: D, only: 'zip 本地解压上限', name: '累计解压字节上限摘掉（高压缩比包照解到底，M1 的字节面复辟）', find: 'if (total > maxBytes) throw zipLimitError(', to: 'if (false && total > maxBytes) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['累计解压字节超限没抛错'] },
   // ---- v3.2.1 公开审查 M2：stdout/stderr 不分流（kit 的 stderr warning 把成功误报 failed）----
   { id: 'M274', file: D, only: 'kit stderr 噪声', name: '把 stderr 重新拼进 JSON 解析（stderr 一句 warning 就判成功转换失败）', find: 'const out = parseJson(stdoutText);', to: 'const out = parseJson(stdoutText + stderrText);', mustRed: ['kit stderr 噪声'], msg: ['stdout 合法且产物已落盘却报失败'] },
+  // ---- v3.2.1 公开审查 L1：ZIP magic 前的 0–3 字节长度守卫（四处命令共用同一个 helper）----
+  { id: 'M275', file: D, only: '短文件长度守卫', name: '摘掉 ZIP magic 前的长度守卫（0–3 B 文件退回 RangeError 装置内部异常）', find: "if (buf.length < 4) die('invalid-document'", to: "if (false && buf.length < 4) die('invalid-document'", mustRed: ['短文件长度守卫'], msg: ['仍是长度越界异常'] },
 ];
 
 const argv = process.argv.slice(2);

@@ -879,6 +879,11 @@ function zipRead(buf, limits) {
   try { return zipReadRaw(buf, limits); }
   catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { dockitCode: 'invalid-document' }); }
 }
+/** L1：ZIP magic 前先量长度。0–3 B 的文件 `readUInt32LE(0)` 会抛 RangeError，被入口兜成"装置内部异常"——
+ *  这类输入不是"不支持的格式"，是**文件本身不完整**：判 invalid-document，并给一句可执行的下一步。 */
+function zipShortGuard(buf, cmd, what, next) {
+  if (buf.length < 4) die('invalid-document', `${cmd} 的输入只有 ${buf.length} B（0–3 字节）：连 ZIP 魔数都不足 4 字节，不可能是完整的${what}`, next);
+}
 function zipReadRaw(buf, limits) {
   const maxEntries = limits && Number(limits.maxEntries) > 0 ? Number(limits.maxEntries) : ZIP_MAX_ENTRIES;
   const maxBytes = limits && Number(limits.maxUncompressedBytes) > 0 ? Number(limits.maxUncompressedBytes) : ZIP_MAX_UNCOMPRESSED_BYTES;
@@ -2072,6 +2077,7 @@ function cmdScrub(args) {
   const input = abs(positional[0]); if (!fs.existsSync(input)) die('invalid-document', `输入不存在：${positional[0]}`, '给绝对路径');
   const buf = fs.readFileSync(input);
   if (buf.slice(0, 5).toString('latin1') === '%PDF-') return scrubPdf(input, buf, positional, flags);   // v2.5.0：PDF 面——仅此分支返回 promise，ZIP 面保持同步（入口兜底照旧）
+  zipShortGuard(buf, 'scrub', ' docx/xlsx/pptx/odt/ods/odp', '先确认源文件没被截断或传坏：从原始来源重新导出／重新下载后重跑 scrub——0–3 B 的空壳不是「清完没残留」的干净件');
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'scrub 吃 OOXML/ODF 的 ZIP 容器与 PDF（v2.5.0 起）；输入按 magic 判两者都不是', 'OLE 二进制（.doc/.xls/.ppt）先 to 成新族再清；PDF 走本命令的 PDF 面（写新文件、非就地）');
   const map = zipRead(buf);
   // 上面那道守卫测的是"是不是 ZIP"。ODF 也是 ZIP：v1.2.0 之前它会一路穿到"没有可清的字段"那一支，把"本装置不支持"
@@ -2298,6 +2304,7 @@ function cmdDump(args) {
   if (positional.length > 1) die('invalid-output', `dump 只收一个输入，给了 ${positional.length} 个`, '用法：dump <输入文件> [--part 部件名] [--text]');
   const wantText = flags.text === true;
   const buf = fs.readFileSync(input);
+  zipShortGuard(buf, 'dump', ' docx/xlsx/pptx/odt/ods/odp', '先确认源文件没被截断或传坏：从原始来源重新导出／重新下载后重跑 dump；0–3 B 的空壳没有部件清单可看');
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'dump 只吃 ZIP 系容器（docx/xlsx/pptx/odt/ods/odp），全程不起引擎；输入按 magic 判不是 ZIP', 'OLE 二进制（.doc/.xls/.ppt）没有部件清单可 dump——先 to 成 OOXML 再 dump');
   let list;
   try { list = zipList(buf); }
@@ -2732,6 +2739,7 @@ function cmdCheck(args) {
   if (!['zip', 'officecli'].includes(backendName)) die('invalid-output', `--backend 只认 zip|officecli，给了 ${JSON.stringify(backendName)}`, '`help check` 的 backend 那行写着两条路线的差别');
   if (buf.subarray(0, 5).toString('latin1') === '%PDF-') return checkPdf(input, buf, filter, want, backendName);
   // 🔴 全程不起引擎（《方案》P1-2 的"纯 ZIP"）：OLE 在这一层就被拒，也不落任何产物
+  zipShortGuard(buf, 'check', ' docx/xlsx/pptx/odt/ods/odp 或 PDF', '先确认源文件没被截断或传坏：从原始来源重新导出／重新下载后重跑 check——0–3 B 的空壳连 PDF 头都读不到');
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'check 吃 ZIP 系容器（docx/xlsx/pptx/odt/ods/odp）与 PDF（v2.6.0 起走纯 JS 结构面），且全程不起引擎；输入按 magic 判两者都不是', 'OLE 二进制（.doc/.xls/.ppt）先 to 成 OOXML 再 check；PDF 交给本命令的 PDF 面；要核正文内容走 verify 的渲染半条');
   let map;
   try { map = zipRead(buf); }
@@ -4469,6 +4477,7 @@ function cmdRedline(args) {
   if (positional.length > 2) die('invalid-output', `redline 只收「输入 操作」两个位置参数，给了 ${positional.length} 个`, '文本用 --text，定位用 --match 或 --para');
   const buf = fs.readFileSync(input);
   const inSha = sha256(buf);
+  zipShortGuard(buf, 'redline', ' docx', '先确认源文件没被截断或传坏：从原始来源重新导出／重新下载后重跑 redline；0–3 B 的空壳没有 WordprocessingML 正文可改');
   if (buf.readUInt32LE(0) !== 0x04034b50) die('unsupported-format', 'redline 只吃 docx（输入按 magic 判不是 ZIP）', 'OLE 的 .doc 先 to 成 docx；ODF/PDF 没有 WordprocessingML 的修订面');
   let map; try { map = zipRead(buf); } catch (e) { die('invalid-document', `ZIP 读不通：${e.message}`, (e && e.dockitNext) || '别当已核验，从来源重取'); }
   if (zipFamily(map) !== 'docx') die('unsupported-format', `这份 ZIP 的容器是 ${zipFamily(map) || '(认不出)'}，redline 只吃 docx`, 'xlsx/pptx 没有 WordprocessingML 修订模型；换工具或先转族');
@@ -7732,6 +7741,24 @@ async function cmdSelftest(args) {
       if (!e.dockitNext || !/上限/.test(e.dockitNext)) bad.push('条目超限没给可执行的 next：' + JSON.stringify(e.dockitNext));
     }
     return bad.length ? bad.slice(0, 5).join(' | ') : true;
+  });
+  t('短文件长度守卫：scrub/dump/check/redline 对 0–3 字节输入判 invalid-document 并给可执行 next，不许抛 RangeError', () => {
+    const short0 = `${S}/short-0.docx`, short3 = `${S}/short-3.docx`;
+    fs.writeFileSync(short0, Buffer.alloc(0));
+    fs.writeFileSync(short3, Buffer.from([0x50, 0x4b, 0x03]));
+    const bad = [];
+    for (const [cmd, extra] of [['scrub', []], ['dump', []], ['check', []], ['redline', ['accept']]]) {
+      for (const f of [short0, short3]) {
+        const p = spawnSync(process.execPath, [__filename, cmd, f, ...extra], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+        let j = null; try { j = JSON.parse(String(p.stdout)); } catch {}
+        const bytes = fs.statSync(f).size;
+        if (!j) { bad.push(`${cmd}/${bytes}B 没出 JSON：${String(p.stdout || p.stderr).replace(/\s+/g, ' ').slice(0, 100)}`); continue; }
+        if (j.code !== 'invalid-document') bad.push(`${cmd}/${bytes}B 的 code=${JSON.stringify(j.code)}（期望 invalid-document）`);
+        if (typeof j.next !== 'string' || !j.next.trim()) bad.push(`${cmd}/${bytes}B 没给可执行 next`);
+        if (/RangeError|outside (?:the )?buffer bounds|readUInt32LE|装置内部异常/.test(String(j.error || '') + ' ' + String(p.stderr || ''))) bad.push(`${cmd}/${bytes}B 仍是长度越界异常：${String(j.error || '').slice(0, 80)}`);
+      }
+    }
+    return bad.length ? bad.slice(0, 6).join(' | ') : true;
   });
   t('scrub 的 roundTrip 自证在位（条目数与逐条字节都对上）', () => SR().roundTrip && SR().roundTrip.bytesMatch === true && SR().roundTrip.entries > 0 ? true : JSON.stringify(SR().roundTrip));
   t('scrub 原件零改动（core.xml 里作者串仍在原文件）', () => { SR(); return str(zipRead(fs.readFileSync(cnPath)).get('docProps/core.xml')).includes(AUTHOR) && !str(zipRead(fs.readFileSync(scrubbed)).get('docProps/core.xml')).includes(AUTHOR); });
