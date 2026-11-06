@@ -454,6 +454,8 @@ const MUTANTS = [
   // ---- v3.2.1 公开审查 M1：本地解压上限的两层（条目数、累计字节）各配一刀 ----
   { id: 'M272', file: D, only: 'zip 本地解压上限', name: '条目数上限摘掉（异常多条目包照读，M1 的条目数面复辟）', find: 'if (count > maxEntries) throw zipLimitError(', to: 'if (false && count > maxEntries) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['条目数超限没抛错'] },
   { id: 'M273', file: D, only: 'zip 本地解压上限', name: '累计解压字节上限摘掉（高压缩比包照解到底，M1 的字节面复辟）', find: 'if (total > maxBytes) throw zipLimitError(', to: 'if (false && total > maxBytes) throw zipLimitError(', mustRed: ['zip 本地解压上限'], msg: ['累计解压字节超限没抛错'] },
+  // ---- v3.2.1 公开审查 M2：stdout/stderr 不分流（kit 的 stderr warning 把成功误报 failed）----
+  { id: 'M274', file: D, only: 'kit stderr 噪声', name: '把 stderr 重新拼进 JSON 解析（stderr 一句 warning 就判成功转换失败）', find: 'const out = parseJson(stdoutText);', to: 'const out = parseJson(stdoutText + stderrText);', mustRed: ['kit stderr 噪声'], msg: ['stdout 合法且产物已落盘却报失败'] },
 ];
 
 const argv = process.argv.slice(2);

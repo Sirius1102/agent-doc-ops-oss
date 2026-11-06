@@ -746,19 +746,37 @@ function runKit(args) {
   const t0 = Date.now();
   const r = spawnSync(process.execPath, [kc.exe, ...args, '--json'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, cwd: ROOT });
   const ms = Date.now() - t0;
-  let json = null;
-  const text = ((r.stdout || '') + (r.stderr || '')).trim();
-  try { json = JSON.parse(text); } catch { /* 非 JSON 输出按 failed 处理 */ }
-  if (r.status === 0 && json && !json.code) return { ok: true, ms, ...json };
-  const code = json?.code || 'failed';
+  // v3.2.1 公开审查 M2：成功 JSON **只从 stdout 取**（此前把 stdout 与 stderr 拼成一串再 JSON.parse，
+  // kit 往 stderr 写一句 warning 就会把一次成功转换误报成 failed）。失败时按 kit 契约只认 stderr 里
+  // **带 code 的结构化 JSON**；warning/普通文本一律只作诊断，绝不参与成功判定。
+  const stdoutText = String(r.stdout || '').trim();
+  const stderrText = String(r.stderr || '').trim();
+  const parseJson = (s) => { if (!s) return { json: null, err: null }; try { return { json: JSON.parse(s), err: null }; } catch (e) { return { json: null, err: e }; } };
+  const out = parseJson(stdoutText);
+  const errSide = parseJson(stderrText);
+  if (r.status === 0 && out.json && !out.json.code) {
+    const okRes = { ok: true, ms, ...out.json };
+    if (stderrText) okRes.stderr = stderrText;
+    return okRes;
+  }
+  // kit 0.1.5 的失败契约是「结构化 JSON 落 stderr、退出码非 0」；成功契约是「JSON 落 stdout」。
+  // 所以失败时只用 stderr 里**确实带 code 的 JSON**，warning/普通文本仍只作诊断，绝不参与"解析成功"的判定。
+  const failJson = (out.json && out.json.code) ? out.json : ((errSide.json && errSide.json.code) ? errSide.json : (out.json || errSide.json));
+  const code = failJson?.code || 'failed';
   // 🔴 v2.2.3：红因不许不带因——spawn 层面的失败（EBUSY/ENOBUFS/ETIMEDOUT…）此前被这行吞成
   //   "退出码 null（无输出）"，本会话的 stdin-EBUSY 就是先被它吞掉、多花三组对照实验才定位的。
   //   现在把 r.error / r.signal 原样带出（与 `spawn 统一 stdio` 判据同轮）。
-  const why = json?.error || text
-    || (r.error ? `子进程起不来（${r.error.code || 'spawn-error'}）：${String(r.error.message || r.error).replace(/\s+/g, ' ').slice(0, 200)}` : '')
-    || (r.signal ? `子进程被信号终止：${r.signal}` : '')
-    || `kit 退出码 ${r.status}（无输出）`;
-  return { ok: false, ms, code, error: why };
+  let why;
+  if (failJson?.error) why = failJson.error;
+  else if (failJson?.code) why = `kit 返回失败码 ${failJson.code}`;
+  else if (r.error) why = `子进程起不来（${r.error.code || 'spawn-error'}）：${String(r.error.message || r.error).replace(/\s+/g, ' ').slice(0, 200)}`;
+  else if (r.signal) why = `子进程被信号终止：${r.signal}`;
+  else if (out.err) why = `kit stdout 不是合法 JSON（${stdoutText.length} B；stderr ${stderrText.length} B 仅作诊断，不作为失败原因）`;
+  else if (failJson) why = `kit 退出码 ${r.status}，但错误通道的 JSON 没有 code`;
+  else why = `kit 未在 stdout 给出 JSON（退出码 ${r.status}；stderr ${stderrText.length} B 仅作诊断）`;
+  const failRes = { ok: false, ms, code, error: why };
+  if (stderrText) failRes.stderr = stderrText;
+  return failRes;
 }
 
 /** R6 委托层：调 OfficeCLI。**只回结构化结论，后端的 stdout 一个字节都不回传**（ADR-002 排除项 B：
@@ -1760,7 +1778,7 @@ function cmdTo(args) {
     }
   }
   if (!r.ok) die(r.code, r.error, nextFor(r.code, { input, output, fam, inExt }));
-  out({ ok: true, op: 'convert', ms: r.ms, backend: r.backend, sheetProbe: noteSheetProbe || undefined, input: { path: input, bytes: fs.statSync(input).size, sha256: sha256(fs.readFileSync(input)) }, output: { path: r.outputPath, bytes: fs.statSync(r.outputPath).size, sha256: sha256(fs.readFileSync(r.outputPath)) }, missingFonts: r.missingFonts, declaredFamilies: declaredFromInput(input), warnings: warnings.length ? warnings : undefined, inputRepair: inputRepair || undefined, note: r.missingFonts?.length ? 'missingFonts 非空＝文档声明了本机没有的字体族，版式可能与原件不同；PDF 再渲染不报缺字属正常' : undefined });
+  out({ ok: true, op: 'convert', ms: r.ms, backend: r.backend, sheetProbe: noteSheetProbe || undefined, input: { path: input, bytes: fs.statSync(input).size, sha256: sha256(fs.readFileSync(input)) }, output: { path: r.outputPath, bytes: fs.statSync(r.outputPath).size, sha256: sha256(fs.readFileSync(r.outputPath)) }, missingFonts: r.missingFonts, declaredFamilies: declaredFromInput(input), warnings: warnings.length ? warnings : undefined, stderr: r.stderr || undefined, inputRepair: inputRepair || undefined, note: r.missingFonts?.length ? 'missingFonts 非空＝文档声明了本机没有的字体族，版式可能与原件不同；PDF 再渲染不报缺字属正常' : undefined });
 }
 
 function nextFor(code, ctx) {
@@ -6550,6 +6568,32 @@ async function cmdSelftest(args) {
       const m = CLI2(['edit', doc, 'set', '/body/p[1]', '--prop', 'text=OTHER'], env);
       if (!m.j || m.j.failureKind !== 'backend-empty-success' || m.j.retryable !== true) bad.push('set 目标值不匹配时仍必须回到可重试空成功，实为 ' + JSON.stringify(m.j && { failureKind: m.j.failureKind, retryable: m.j.retryable }));
       return bad.length ? bad.slice(0, 6).join(' | ') : true;
+    } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
+  });
+
+  t('kit stderr 噪声不误报失败：stdout 合法 JSON＋产物落盘时成功，stderr warning 只作诊断', () => {
+    const S = path.join(TMP_DIR, `m2kit-${stamp()}`); fs.mkdirSync(S, { recursive: true });
+    try {
+      const fake = path.join(S, 'fake-kit.js');
+      fs.writeFileSync(fake, [
+        "const fs=require('node:fs');",
+        "const a=process.argv.slice(2);",
+        "const i=a.indexOf('--output');",
+        "const out=i>=0?a[i+1]:null;",
+        "if(out) fs.writeFileSync(out, 'fake pdf bytes');",
+        "process.stderr.write('warning: fake kit stderr noise\\n');",
+        "process.stdout.write(JSON.stringify({ok:true,outputPath:out,missingFonts:[]})+'\\n');",
+      ].join('\n'));
+      const input = path.join(S, 'in.docx');
+      fs.writeFileSync(input, docx('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>M2</w:t></w:r></w:p></w:body></w:document>'));
+      const out = path.join(S, 'out.pdf');
+      const bad = [];
+      const r = CLI2(['to', input, out], { DOCKIT_KIT_CLI: fake });
+      if (!r.j) return '假 kit 的 to 没出 JSON：' + String(r.p.stdout || r.p.stderr).slice(0, 160);
+      if (r.j.ok !== true) bad.push('stdout 合法且产物已落盘却报失败：' + JSON.stringify({ code: r.j.code, error: r.j.error }));
+      if (!(r.j.output && r.j.output.path === out && r.j.output.bytes > 0)) bad.push('成功结果的 output 形状不对：' + JSON.stringify(r.j.output));
+      if (!/fake kit stderr noise/.test(String(r.j.stderr || ''))) bad.push('stderr 诊断没保留在结果里：' + JSON.stringify(r.j.stderr));
+      return bad.length ? bad.slice(0, 4).join(' | ') : true;
     } finally { r6Sweep(); try { fs.rmSync(S, { recursive: true, force: true }); } catch {} }
   });
 
