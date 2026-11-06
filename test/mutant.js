@@ -463,6 +463,9 @@ const MUTANTS = [
   // ---- 审查批 公开同步 D-08：app.xml 短名吃长名前缀 + scrub 产物只搜串不校验 XML ----
   { id: 'M277', file: D, only: 'scrub 产物 XML', name: '把 app.xml 脱敏正则退回前缀匹配（Characters 吃掉 CharactersWithSpaces 的开标签）', find: String.raw`cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(?:\s[^>]*)?(?:\/>|>([^<]*)<\/\1>)/g, '');`, to: String.raw`cleanPart('docProps/app.xml', /<(Company|Manager|Template|Application|AppVersion|TotalTime|Pages|Words|Characters|Lines|Paragraphs)(>[^<]*<\/\1>)?/g, '');`, mustRed: ['scrub 产物 XML 必须 well-formed'], msg: ['scrub 失败：invalid-output'] },
   { id: 'M278', file: D, only: 'scrub 坏 app.xml', name: '摘掉改写后 XML 部件的 well-formedness 校验（坏源件被当成功放行）', find: `for (const part of rewrittenParts) {`, to: `for (const part of []) { // M278`, mustRed: ['scrub 坏 app.xml 必须被拦'], msg: ['被当成功放行'] },
+  // ---- v3.2.1：OCR 方向（自 v3.15.8 私有版移植）两层各自一层牙 ----
+  { id: 'M279', file: D, only: 'ocr 方向', name: '把 auto 判出的校正角强制按 0° 处理（倒置页照旧乱码却报成功）', find: `const applied = explicitRotate !== null ? explicitRotate : detected;`, to: `const applied = explicitRotate !== null ? explicitRotate : 0; // M279`, mustRed: ['ocr 方向 auto：0/90/180/270 四向合成页各自识别并校正到位（v3.2.1）'] },
+  { id: 'M280', file: D, only: 'ocr 方向', name: 'OSD 缺失时不判 unavailable，静默按 0° 继续识别（假绿）', find: `if (!osd.available && explicitRotate === null) {`, to: `if (false && !osd.available && explicitRotate === null) { // M280`, mustRed: ['ocr 方向 auto：OSD 缺失判 unavailable＋degraded，不按 0° 假绿（v3.2.1）'], msg: ['OSD 缺失却回了成功'] },
 ];
 
 const argv = process.argv.slice(2);

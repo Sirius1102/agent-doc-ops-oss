@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 The public tree started at v3.0.1; entries below describe public releases only.
 `vX.Y.Z` feature work raises the Y bit, fixes raise the Z bit (X only on owner order).
 
+## v3.2.1 - 2026-11-06
+
+Backports the private tree's OCR direction fix (v3.15.8). Default behavior is
+unchanged: without the new switches `ocr` still runs at 0° and a rotated scan
+can come back as `ok:true` with garbage text.
+
+- `ocr [--rotate auto|90|180|270] [--osd]`: `auto` runs tesseract OSD
+  (`--psm 0 -l osd`), reports `direction{orientationDegrees,
+  detectedCorrectionDegrees, correctionDegrees, confidence, script, rotated,
+  reason}`, and rotates the PNG clockwise before recognition when needed.
+- Honest degradation: missing `osd.traineddata`/unsupported engine returns
+  `unavailable` + `degraded:true`; OSD confidence below 3.0 returns `failed` +
+  `degraded:true` with an executable `next` (install `osd.traineddata` or pass
+  an explicit angle). No silent 0° success on rotated pages.
+- Criteria 171 -> 174; mutants 276 -> 278 (M279/M280).
+
 ## v3.2.0 - 2026-10-16
 
 First public feature round. It folds in the v3.1.0 redact expansion (never

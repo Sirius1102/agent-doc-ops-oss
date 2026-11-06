@@ -1,4 +1,4 @@
-# Agent Doc Ops (dockit, Open Source Edition) v3.2.0
+# Agent Doc Ops (dockit, Open Source Edition) v3.2.1
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
 [![Platform](https://img.shields.io/static/v1?label=platform&message=Windows%20x64&color=blue)](#install--reproduce)
@@ -71,7 +71,7 @@ flowchart LR
 A refusal is a verdict too: pre-gates (size/overwrite/encryption/format) fire
 before any unpacking or writing. No half-finished products.
 
-Version v3.2.0. Authority: this README (command surface master) + `docs/adr/`
+Version v3.2.1. Authority: this README (command surface master) + `docs/adr/`
 (key design decisions). Discipline: inputs read-only, products default to
 `_out/` (except `DOCKIT_OUT_DIR` test redirect / `_audit` ledger / gc
 quarantine), never overwrite; temp files see Operating boundaries

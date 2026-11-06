@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * dockit.js — 本机文档操作装置（项目：Agent文档操作）
- * 版本：v3.2.0（版本号同步面：package.json / 本文件 VERSION / README 版本行）
+ * 版本：v3.2.1（版本号同步面：package.json / 本文件 VERSION / README 版本行）
  *
  * 职责：把 @deepseek-ai/libreoffice-kit 的预编译 LibreOffice 引擎包成「绝对路径 + 一条命令 + 一份 JSON」，
  *       让可运行 Node 命令的 Agent 按 CLI/JSON 契约集成，安全地转换、渲染、重算、体检 Office 文档，
@@ -16,7 +16,7 @@
  */
 
 //#region 配置 / 常量区
-const VERSION = '3.2.0';
+const VERSION = '3.2.1';
 const KIT_VERSION = '0.1.5';            // 本仓锁定版本；升级需单独验证
 const ROOT = __dirname;
 const KIT_CLI = ROOT + '/node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js';
@@ -46,6 +46,10 @@ const TESSERACT_DIR = process.env.DOCKIT_TESSERACT_DIR || 'C:\\Program Files\\Te
 const TESSERACT_EXE = process.env.DOCKIT_TESSERACT || TESSERACT_DIR + '\\tesseract.exe';
 const TESSDATA_DIR = process.env.DOCKIT_TESSDATA || TESSERACT_DIR + '\\tessdata';
 const OCR_DEFAULT_LANG = process.env.DOCKIT_OCR_LANG || 'eng';
+// ---- v3.2.1：OCR 方向识别（自 v3.15.8 私有版移植）。默认仍 0° 盲识；`--rotate auto` 才走 tesseract OSD。
+// 阈值取舍与本机实测同私有版：稀疏合成页置信度 1.1–1.7 会判错，真实版面 36.9–42.3 四向全对；取 3.0 为保守下限。
+const OCR_ROTATE_CHOICES = ['auto', '90', '180', '270'];
+const OCR_OSD_MIN_CONFIDENCE = 3.0;
 // OfficeCLI 写后端（ADR-002，v1.6.0 R0-b 起在册）。与 Tesseract 两个常量同形状：**配置区默认 + 环境变量覆盖**，
 // 且解析器必须做成**函数**而不是加载期常量——判据要在跑的时候把 `DOCKIT_OFFICECLI` 指到不存在的路径上，
 // 亲眼看它真的按指的路径走（"覆盖面存在但没人覆盖过"就是假牙；ADR-002 §三-4）。
@@ -1051,6 +1055,76 @@ function installedFontFamilies() {
   return { dir, readable: true, count: names.length };
 }
 
+// ---- v3.2.1：PNG 解码/重编码/顺时针旋转（OCR 方向校正用；只吃 8bit 灰度/RGB/灰度+α/RGBA）----
+function pngDecode(file) {
+  const b = fs.readFileSync(file);
+  if (b.slice(0, 8).toString('hex') !== '89504e470d0a1a0a') return null;
+  let off = 8, w = 0, h = 0, color = 0; const idat = [];
+  while (off + 8 <= b.length) {
+    const len = b.readUInt32BE(off), type = b.toString('latin1', off + 4, off + 8), dataStart = off + 8;
+    if (type === 'IHDR') { w = b.readUInt32BE(dataStart); h = b.readUInt32BE(dataStart + 4); color = b[dataStart + 9]; }
+    else if (type === 'IDAT') idat.push(b.subarray(dataStart, dataStart + len));
+    else if (type === 'IEND') break;
+    off = dataStart + len + 4;
+  }
+  const ch = color === 6 ? 4 : color === 2 ? 3 : color === 0 ? 1 : color === 4 ? 2 : 0;
+  if (!w || !h || !ch) return null;
+  let raw; try { raw = zlib.inflateSync(Buffer.concat(idat)); } catch { return null; }
+  const stride = w * ch, pixels = Buffer.alloc(stride * h);
+  let prev = Buffer.alloc(stride), pos = 0;
+  for (let y = 0; y < h; y++) {
+    const ft = raw[pos++], line = raw.subarray(pos, pos + stride); pos += stride;
+    const cur = Buffer.alloc(stride);
+    for (let x = 0; x < stride; x++) {
+      const a = x >= ch ? cur[x - ch] : 0, bb = prev[x], c = x >= ch ? prev[x - ch] : 0; let v = line[x];
+      if (ft === 1) v = (v + a) & 255; else if (ft === 2) v = (v + bb) & 255;
+      else if (ft === 3) v = (v + ((a + bb) >> 1)) & 255;
+      else if (ft === 4) { const p = a + bb - c, pa = Math.abs(p - a), pb = Math.abs(p - bb), pc = Math.abs(p - c); v = (v + (pa <= pb && pa <= pc ? a : pb <= pc ? bb : c)) & 255; }
+      cur[x] = v;
+    }
+    cur.copy(pixels, y * stride);
+    prev = cur;
+  }
+  return { w, h, ch, pixels };
+}
+/** 最小 PNG 重编码（RGB 8bit、逐行 filter 0）；α 按白底合成，避免透明区域被 tesseract 当黑。 */
+function pngEncodeRgb(w, h, rgb) {
+  const raw = Buffer.alloc(h * (w * 3 + 1));
+  for (let y = 0; y < h; y++) rgb.copy(raw, y * (w * 3 + 1) + 1, y * w * 3, (y + 1) * w * 3);
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+/** 顺时针旋转 PNG（90/180/270）。返回 { ok,width,height } 或 { ok:false,error }。 */
+function pngRotateClockwise(srcFile, deg, destFile) {
+  const d = pngDecode(srcFile);
+  if (!d) return { ok: false, error: 'PNG 解码失败（不是装置能读的 8bit 灰度/RGB/α PNG）' };
+  const { w, h, ch, pixels } = d;
+  const swap = deg === 90 || deg === 270;
+  const ow = swap ? h : w, oh = swap ? w : h;
+  const out = Buffer.alloc(ow * oh * 3, 255);
+  const px = (x, y) => (y * w + x) * ch;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let nx, ny;
+    if (deg === 90) { nx = h - 1 - y; ny = x; }
+    else if (deg === 180) { nx = w - 1 - x; ny = h - 1 - y; }
+    else { nx = y; ny = w - 1 - x; }
+    const si = px(x, y), di = (ny * ow + nx) * 3;
+    if (ch <= 2) { const v = pixels[si]; out[di] = v; out[di + 1] = v; out[di + 2] = v; }
+    else {
+      const r = pixels[si], g = pixels[si + 1], b = pixels[si + 2];
+      if (ch === 4) { const a = pixels[si + 3] / 255; out[di] = Math.round(r * a + 255 * (1 - a)); out[di + 1] = Math.round(g * a + 255 * (1 - a)); out[di + 2] = Math.round(b * a + 255 * (1 - a)); }
+      else { out[di] = r; out[di + 1] = g; out[di + 2] = b; }
+    }
+  }
+  fs.writeFileSync(destFile, pngEncodeRgb(ow, oh, out));
+  return { ok: true, width: ow, height: oh };
+}
 // ---- 像素自证：PNG 非白像素占比（证明"字真的画出来了"，不看回显）----
 function pngDarkRatio(file) {
   const b = fs.readFileSync(file);
@@ -1215,13 +1289,15 @@ const HELP_SPEC = {
     codes: ['invalid-document', 'unsupported-format', 'input-too-large', 'timeout', 'unavailable', 'failed'],
   },
   ocr: {
-    usage: 'ocr <PNG|PDF> [--pages 1,3] [--lang eng] [--tessdata-dir 目录] [--psm n] [--pixels off] [--timeout-ms n]',
+    usage: 'ocr <PNG|PDF> [--pages 1,3] [--lang eng] [--tessdata-dir 目录] [--psm n] [--rotate auto|90|180|270] [--osd] [--pixels off] [--timeout-ms n]',
     positional: [{ name: '输入文件', required: true, note: '只吃 PNG 与 PDF（按 magic 判）；**只收一个**，给第二个路径即 invalid-output' }],
     flags: [
       { name: 'pages', type: 'string', default: null, defaultNote: '只对 PDF 有意义；对 PNG 用它是无效组合（装置拒绝）' },
       { name: 'lang', type: 'string', default: 'eng', defaultFrom: 'OCR_DEFAULT_LANG', note: '中文要 chi_sim；缺语言包时 tesseract 自身报错，装置映射为 unsupported-format 并指路' },
       { name: 'tessdata-dir', type: 'string', default: 'C:\\Program Files\\Tesseract-OCR\\tessdata', defaultFrom: 'TESSDATA_DIR', note: '可被 DOCKIT_TESSDATA 改；自报的 langCount/langs 按**本次真用的那个目录**列' },
       { name: 'psm', type: 'int', default: null, defaultNote: '不传＝tesseract 默认（3）；装置只放行 0–13，越界即 invalid-output' },
+      { name: 'rotate', type: 'choice', choices: ['auto', '90', '180', '270'], default: null, defaultNote: '默认不做方向探测、按 0° 识别（与旧版一致：倒置页仍可能出乱码且 ok:true）；auto＝用 tesseract OSD 取方向证据（degrees/confidence）并按它给的校正角顺时针旋转；90/180/270＝按指定角度顺时针校正。OSD 不可用或置信度低于 ' + OCR_OSD_MIN_CONFIDENCE + ' 时 auto 不报成功（unavailable/failed＋degraded＋next），绝不静默按 0° 继续' },
+      { name: 'osd', type: 'boolean', default: false, note: '单独给等价于 --rotate auto；与显式 --rotate 90/180/270 同给时 OSD 只作证据、显式角度优先（不一致记在 direction.conflict）。结果逐页带 direction（orientationDegrees/detectedCorrectionDegrees/correctionDegrees/confidence/rotated/reason）' },
       { name: 'pixels', type: 'choice', choices: ['off'], default: null, defaultNote: '不传＝逐页给非白像素占比' },
       { name: 'timeout-ms', type: 'int', default: 120000, defaultFrom: 'DEFAULT_TIMEOUT_MS', note: '整轮预算；单页被掐报 timeout' },
     ],
@@ -2208,6 +2284,27 @@ function tesseractProbe() {
   return { available: true, version: verLine, langCount: lg.langCount, langs: lg.langs, langPack: path.basename(TESSDATA_DIR), tessdataDir: TESSDATA_DIR, exe: TESSERACT_EXE };
 }
 const ocrNextUnavailable = () => `装 Tesseract（UB-Mannheim 构建），或设环境变量：DOCKIT_TESSERACT 指 tesseract.exe（当前解析 ${TESSERACT_EXE}）、DOCKIT_TESSDATA 指 tessdata 目录（当前解析 ${TESSDATA_DIR}）`;
+/** v3.2.1：tesseract OSD（--psm 0 -l osd）取方向。只认 `Rotate:`（顺时针校正角）与 Orientation confidence；
+ *  缺 osd.traineddata / 引擎不支持 --psm 0 时不猜、不回 0°：返回 available:false，由调用方判 unavailable（不静默假绿）。 */
+function tesseractOsd(img, tessdataDir, timeoutMs) {
+  const r = spawnSync(TESSERACT_EXE, [img, '-', '--psm', '0', '-l', 'osd', '--tessdata-dir', tessdataDir], { encoding: 'utf8', timeout: Math.max(1000, timeoutMs) });
+  const text = `${r.stdout || ''}\n${r.stderr || ''}`.trim();
+  if (r.signal === 'SIGTERM') return { available: false, why: `OSD 超时被掐（预算 ${timeoutMs}ms）` };
+  if (r.error) return { available: false, why: `OSD 进程调用失败：${String(r.error).slice(0, 160)}` };
+  if (r.status !== 0) return { available: false, why: `tesseract OSD 退码 ${r.status}：${String(r.stderr || r.stdout || '(空输出)').split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ').slice(0, 200)}` };
+  const rot = text.match(/Rotate:\s*(\d+)/i);
+  const conf = text.match(/Orientation confidence:\s*([0-9.]+)/i);
+  if (!rot || !conf) return { available: false, why: `OSD 输出缺 Rotate/Orientation confidence（原文：${text.split(/\r?\n/).slice(0, 4).join(' / ').slice(0, 200)}）` };
+  const ori = text.match(/Orientation in degrees:\s*(\d+)/i);
+  const script = text.match(/Script:\s*([A-Za-z]+)/i);
+  return {
+    available: true,
+    orientationDegrees: ori ? Number(ori[1]) : null,
+    correctionDegrees: Number(rot[1]),
+    confidence: Number(conf[1]),
+    script: script ? script[1] : null,
+  };
+}
 function cmdOcr(args) {
   const { positional, flags } = parseArgs(args, 'ocr');
   const input = abs(positional[0]); if (!input || !fs.existsSync(input)) die('invalid-document', `输入不存在：${positional[0]}`, '给绝对路径');
@@ -2220,6 +2317,11 @@ function cmdOcr(args) {
   const tessdataDir = flags['tessdata-dir'] ? abs(flags['tessdata-dir']) : TESSDATA_DIR;
   const timeoutMs = Number(flags['timeout-ms'] ?? DEFAULT_TIMEOUT_MS);
   const wantPixels = flags.pixels !== 'off';
+  // v3.2.1：方向开关。不给这两个开关时 direction 字段不出现，识别路径与旧版完全一致。
+  const rotateFlag = flags.rotate === undefined ? null : String(flags.rotate);
+  if (rotateFlag !== null && !OCR_ROTATE_CHOICES.includes(rotateFlag)) die('invalid-output', `--rotate 只认 ${OCR_ROTATE_CHOICES.join('|')}，给了 ${JSON.stringify(rotateFlag)}`, 'auto＝用 OSD 探测方向并按它给的校正角旋转；90/180/270＝按指定角度顺时针校正；不给＝沿用旧行为（0° 盲识，不做方向探测）');
+  const explicitRotate = rotateFlag && rotateFlag !== 'auto' ? Number(rotateFlag) : null;
+  const osdRequested = rotateFlag === 'auto' || flags.osd === true;
   const started = Date.now();
   const probe = tesseractProbe();
   if (!probe.available) die('unavailable', probe.why, ocrNextUnavailable());
@@ -2256,11 +2358,64 @@ function cmdOcr(args) {
   const results = pageList.map((p) => {
     const outBase = kind === 'png' ? freePath(OUT_DIR, `${p.label}-ocr`, 'txt') : path.join(renderDir, `ocr-${p.label}`);
     const t0 = Date.now();
-    runTess(p.img, outBase);
+    // v3.2.1：方向证据与校正。默认（两个开关都不给）direction 不出现、img 就是原图——旧行为逐字不变。
+    let workImg = p.img;
+    let direction;
+    if (osdRequested || explicitRotate !== null) {
+      const remaining = () => Math.max(1000, timeoutMs - (Date.now() - started));
+      let osd = null;
+      if (osdRequested) {
+        osd = tesseractOsd(p.img, tessdataDir, remaining());
+        if (!osd.available && explicitRotate === null) {
+          // 诚实降级：--rotate auto 拿不到方向证据时，绝不按 0° 盲识后报成功。
+          die('unavailable', `方向探测不可用：${osd.why}`, `补装 osd.traineddata 到 ${tessdataDir}（Tesseract 官方 osd 语言包；本机 --list-langs 应能列出 osd），或手工指定 --rotate 90|180|270；去掉 --rotate/--osd 会回到 0° 盲识——倒置页会给乱码但退出 0，别把那种成功当已校正`, { degraded: true, direction: { mode: 'osd', status: 'unavailable', page: p.label, why: osd.why } });
+        }
+        const valid = osd.available && [0, 90, 180, 270].includes(osd.correctionDegrees);
+        if (osd.available && !valid && explicitRotate === null) {
+          die('failed', `方向未确认：${osd.why || ''} OSD 回了非 90° 整数倍的校正角（${osd.correctionDegrees}°）`.trim(), '换更清晰的原图重跑；或按 direction 证据用 --rotate 90|180|270 手工指定；去掉 --rotate/--osd 会回到 0° 盲识（倒置页会给乱码）', { degraded: true, direction: { mode: 'osd', status: 'unexpected-angle', page: p.label, detectedCorrectionDegrees: osd.correctionDegrees, confidence: osd.confidence } });
+        }
+        if (valid && explicitRotate === null && osd.confidence < OCR_OSD_MIN_CONFIDENCE) {
+          // 置信度低于下限：宁可不识别，也不拿"未确认方向"的乱码冒充绿。
+          die('failed', `方向未确认：OSD 置信度 ${osd.confidence} 低于下限 ${OCR_OSD_MIN_CONFIDENCE}（它判的校正角是 ${osd.correctionDegrees}°）——装置不拿未确认方向继续识别后报成功`, '换更清晰的扫描件/提高扫描分辨率重跑；或按 direction 证据用 --rotate 90|180|270 手工指定；去掉 --rotate/--osd 会回到 0° 盲识（倒置页会给乱码）', { degraded: true, direction: { mode: 'osd', status: 'low-confidence', page: p.label, detectedCorrectionDegrees: osd.correctionDegrees, confidence: osd.confidence, threshold: OCR_OSD_MIN_CONFIDENCE } });
+        }
+        // 显式角度 + --osd 只作证据：方向由调用方断言，低置信只记为证据（confidenceBelowThreshold），不推翻显式指令。
+      }
+      const detected = osd && osd.available && [0, 90, 180, 270].includes(osd.correctionDegrees) ? osd.correctionDegrees : null;
+      const applied = explicitRotate !== null ? explicitRotate : detected;
+      direction = osdRequested ? {
+        mode: 'osd', status: explicitRotate !== null ? 'asserted' : 'confirmed', page: p.label,
+        orientationDegrees: osd ? osd.orientationDegrees : null, detectedCorrectionDegrees: detected,
+        correctionDegrees: applied, confidence: osd ? osd.confidence : null, script: osd ? osd.script : null,
+        rotated: applied !== 0,
+        reason: applied === 0
+          ? 'OSD 判无需旋转（校正角 0°）'
+          : (explicitRotate !== null
+            ? `OSD 判校正 ${detected === null ? '不可用' : detected + '°'}；按调用方指定顺时针旋转 ${applied}°`
+            : `OSD 判校正 ${detected}°（置信度 ${osd.confidence}），已顺时针旋转校正`),
+        conflict: explicitRotate !== null && detected !== null && explicitRotate !== detected ? { explicit: explicitRotate, detected } : undefined,
+        osdStatus: osd && !osd.available ? 'unavailable' : undefined,
+        osdWhy: osd && !osd.available ? osd.why : undefined,
+      } : {
+        mode: 'explicit', status: 'asserted', page: p.label,
+        correctionDegrees: applied, rotated: applied !== 0,
+        reason: `按调用方指定顺时针旋转 ${applied}°（未做 OSD 探测；要方向证据加 --osd）`,
+      };
+      if (osdRequested && osd && !osd.available) direction.degraded = true;
+      if (osdRequested && osd && osd.available && explicitRotate !== null && osd.confidence < OCR_OSD_MIN_CONFIDENCE) direction.confidenceBelowThreshold = { confidence: osd.confidence, threshold: OCR_OSD_MIN_CONFIDENCE };
+      if (applied !== 0) {
+        ensureDir(TMP_DIR);
+        const rotPath = freePath(TMP_DIR, `ocr-rot-${p.label}-${applied}`, 'png');
+        const rr = pngRotateClockwise(p.img, applied, rotPath);
+        if (!rr.ok) die('failed', `方向校正失败（PNG 顺时针旋转 ${applied}°）：${rr.error}`, '这张图不是装置能重编码的 8bit PNG；先 pages 重渲染（产物是标准 PNG）或手工转正后再 ocr');
+        workImg = rotPath;
+        direction.rotationFile = rotPath;
+      }
+    }
+    runTess(workImg, outBase);
     const txtPath = `${outBase}.txt`;
     const txt = fs.existsSync(txtPath) ? str(fs.readFileSync(txtPath)) : '';
     const lines = txt.split(/\r?\n/).filter((l) => l.trim() !== '');
-    return { label: p.label, file: txtPath, chars: lines.reduce((a, l) => a + l.length, 0), lines: lines.length, pixelEvidence: wantPixels ? (pngDarkRatio(p.img) || { err: 'png-decode-failed' }) : 'off', ms: Date.now() - t0 };
+    return { label: p.label, file: txtPath, chars: lines.reduce((a, l) => a + l.length, 0), lines: lines.length, pixelEvidence: wantPixels ? (pngDarkRatio(workImg) || { err: 'png-decode-failed' }) : 'off', direction: direction || undefined, ocrImage: workImg !== p.img ? workImg : undefined, ms: Date.now() - t0 };
   });
   const eff = tesseractLangs(TESSERACT_EXE, tessdataDir);
   out({ ok: true, op: 'ocr', backend: probe.version, lang, langPack: path.basename(tessdataDir), langCount: eff.langCount, langs: eff.langs, langsNote: eff.langsNote, tessdataDir, tesseractExe: probe.exe, pageCount: results.length, dir: renderDir || undefined, pages: results, ms: Date.now() - started, note: '空结果是数据不是错误（空白页 0 行 0 字属正常）；识别文本只落 txt 文件，不回显进 JSON' });
@@ -9096,6 +9251,92 @@ const DEP_SKIP_REGISTRY = [
     // 会把默认目录那套（eng + osd ＝ 2 种）报成这次的清单。
     if (o.j.langsNote) return `覆盖目录的语言清单没读成，却仍回了成功：${o.j.langsNote}`;
     if (o.j.langCount !== 1 || (o.j.langs || []).join(',') !== 'eng') return `语言清单不是本次覆盖目录的：langCount=${o.j.langCount} langs=${JSON.stringify(o.j.langs)}（那个目录里只有 eng.traineddata，应数出 1 种 eng）`;
+    return true;
+  });
+
+  // ---- v3.2.1：OCR 方向识别判据组（自 v3.15.8 私有版移植；合成四向页，非真件） ----
+  const osdPagePng = (file, lines, y0) => {
+    const W = 2480, H = 3508, SC = 20, GAP = 8, px = Buffer.alloc(W * H, 255);
+    const text = 'DOCKIT DOCKIT DOCKIT', lw = text.length * 5 * SC + (text.length - 1) * GAP;
+    for (let li = 0; li < lines; li++) {
+      const ox = Math.round((W - lw) / 2), oy = y0 + li * (7 * SC + 80);
+      for (const [ci, ch] of [...text].entries()) {
+        if (ch === ' ') continue;
+        for (let rty = 0; rty < 7; rty++) for (let cx = 0; cx < 5; cx++) {
+          if (!((OCR_FONT[ch][rty] >> (4 - cx)) & 1)) continue;
+          for (let dy = 0; dy < SC; dy++) for (let dx = 0; dx < SC; dx++) px[(oy + rty * SC + dy) * W + (ox + ci * (5 * SC + GAP) + cx * SC + dx)] = 0;
+        }
+      }
+    }
+    const raw = Buffer.alloc(H * (W * 3 + 1));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = px[y * W + x]; raw[y * (W * 3 + 1) + 1 + x * 3] = v; raw[y * (W * 3 + 1) + 2 + x * 3] = v; raw[y * (W * 3 + 1) + 3 + x * 3] = v; }
+    const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type, 'latin1'), data]); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td) >>> 0); return Buffer.concat([len, td, crc]); };
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
+    fs.writeFileSync(file, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
+  };
+  const osdReady = () => fs.existsSync(TESSERACT_EXE) && fs.existsSync(path.join(TESSDATA_DIR, 'osd.traineddata'));
+  t('ocr 方向 auto：0/90/180/270 四向合成页各自识别并校正到位（v3.2.1）', () => {
+    if (!osdReady()) return `skip（本机 tesseract 或 osd.traineddata 不在位：${TESSERACT_EXE} / ${path.join(TESSDATA_DIR, 'osd.traineddata')}）`;
+    const OD = ensureDir(`${OCR_S}/osd-four`);
+    const up = `${OD}/up.png`;
+    osdPagePng(up, 14, 160);
+    const cases = [{ f: up, deg: 0, exp: 0 }, { f: `${OD}/r90.png`, deg: 90, exp: 270 }, { f: `${OD}/r180.png`, deg: 180, exp: 180 }, { f: `${OD}/r270.png`, deg: 270, exp: 90 }];
+    const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    const readTxt = (pg) => (fs.existsSync(pg.file) ? norm(str(fs.readFileSync(pg.file))) : '');
+    // 正向页的识别文本作基准：校正后的页逐像素等价于正向页，tesseract 输出必须一致。
+    const j0 = ocrRun(up, null, ['--rotate', 'auto', '--psm', '6', '--pixels', 'off']).j;
+    if (!j0 || j0.ok !== true) return `0°：正向页 auto 识别失败 code=${j0 && j0.code} ${JSON.stringify(j0 && j0.error).slice(0, 120)}`;
+    const baseTxt = readTxt(j0.pages[0]);
+    if (!baseTxt) return '0°：正向页识别为空，基准文本无从建立';
+    for (const c of cases) {
+      if (c.deg !== 0) {
+        const rr = pngRotateClockwise(up, c.deg, c.f);
+        if (!rr.ok) return `合成页旋转 ${c.deg}° 失败：${rr.error}`;
+      }
+      const j = c.deg === 0 ? j0 : ocrRun(c.f, null, ['--rotate', 'auto', '--psm', '6', '--pixels', 'off']).j;
+      if (!j || j.ok !== true) return `${c.deg}°：auto 识别失败 code=${j && j.code} ${JSON.stringify(j && j.error).slice(0, 120)}`;
+      const pg = j.pages[0], d = pg.direction;
+      if (!d) return `${c.deg}°：direction 缺失（方向证据没回报）`;
+      if (d.status !== 'confirmed') return `${c.deg}°：direction.status=${d.status}（应为 confirmed）`;
+      if (d.detectedCorrectionDegrees !== c.exp) return `${c.deg}°：OSD 判定校正角 ${d.detectedCorrectionDegrees}（应 ${c.exp}）`;
+      if (d.correctionDegrees !== c.exp) return `${c.deg}°：实际校正角 ${d.correctionDegrees}（应 ${c.exp}）`;
+      if (d.rotated !== (c.exp !== 0)) return `${c.deg}°：rotated=${d.rotated}（应 ${c.exp !== 0}）`;
+      if (!(d.confidence >= OCR_OSD_MIN_CONFIDENCE)) return `${c.deg}°：confidence=${d.confidence} 低于下限 ${OCR_OSD_MIN_CONFIDENCE}`;
+      const txt = readTxt(pg);
+      if (txt !== baseTxt) return `${c.deg}°：校正后识别文本与正向页不一致（没转到位）：${JSON.stringify(txt.slice(0, 60))} ≠ ${JSON.stringify(baseTxt.slice(0, 60))}`;
+      if (c.exp !== 0 && !pg.ocrImage) return `${c.deg}°：实际旋转了但没报 ocrImage 落点`;
+    }
+    return true;
+  });
+  t('ocr 方向 auto：OSD 缺失判 unavailable＋degraded，不按 0° 假绿（v3.2.1）', () => {
+    if (!fs.existsSync(TESSERACT_EXE)) return `skip（本机无 tesseract（解析 ${TESSERACT_EXE}））`;
+    const OD = ensureDir(`${OCR_S}/osd-missing`), noOsd = `${OD}/tessdata`, engSrc = path.join(TESSDATA_DIR, 'eng.traineddata');
+    if (!fs.existsSync(engSrc)) return 'skip（本机 tessdata 里没有 eng.traineddata，无 OSD 的覆盖目录无从构造）';
+    fs.mkdirSync(noOsd, { recursive: true });
+    fs.copyFileSync(engSrc, path.join(noOsd, 'eng.traineddata'));
+    const f = `${OD}/page.png`;
+    osdPagePng(f, 14, 160);
+    const { r, j } = ocrRun(f, null, ['--rotate', 'auto', '--tessdata-dir', noOsd]);
+    if (j && j.ok === true) return `OSD 缺失却回了成功（假绿）：chars=${j.pages && j.pages[0] && j.pages[0].chars}`;
+    if (r.status !== 1) return `OSD 缺失时退出码 ${r.status}（应 1）`;
+    if (!j || j.code !== 'unavailable') return `OSD 缺失时 code=${j && j.code}（应 unavailable）`;
+    if (j.degraded !== true) return 'OSD 缺失时没标 degraded';
+    if (!j.direction || j.direction.status !== 'unavailable') return `direction.status=${j.direction && j.direction.status}（应 unavailable）`;
+    if (!/osd\.traineddata/.test(j.next || '') || !/--rotate/.test(j.next || '')) return `next 没给补装或手工指定角度的处置：${JSON.stringify(j.next)}`;
+    return true;
+  });
+  t('ocr 方向 auto：低置信度判 degraded，不冒充成功（v3.2.1）', () => {
+    if (!osdReady()) return `skip（本机 tesseract 或 osd.traineddata 不在位）`;
+    const f = `${ensureDir(`${OCR_S}/osd-lowconf`)}/sparse.png`;
+    osdPagePng(f, 4, 1400); // 实测 4 行时 OSD confidence≈2.1（< 3.0），会判低置信
+    const { r, j } = ocrRun(f, null, ['--rotate', 'auto']);
+    if (j && j.ok === true) return `低置信度却回了成功（假绿）：direction=${JSON.stringify(j.pages && j.pages[0] && j.pages[0].direction)}`;
+    if (r.status !== 1) return `低置信度时退出码 ${r.status}（应 1）`;
+    if (!j || j.code !== 'failed') return `低置信度时 code=${j && j.code}（应 failed）`;
+    if (j.degraded !== true) return '低置信度时没标 degraded';
+    if (!j.direction || j.direction.status !== 'low-confidence') return `direction.status=${j.direction && j.direction.status}（应 low-confidence）`;
+    if (!(j.direction.confidence < OCR_OSD_MIN_CONFIDENCE)) return `direction.confidence=${j.direction.confidence} 没有低于下限 ${OCR_OSD_MIN_CONFIDENCE}`;
+    if (!/--rotate/.test(j.next || '')) return `next 没给手工指定角度的处置：${JSON.stringify(j.next)}`;
     return true;
   });
 
